@@ -38,6 +38,10 @@ if "generating_summary" not in st.session_state:
     st.session_state.generating_summary = False
 if "latest_audio_response" not in st.session_state:
     st.session_state.latest_audio_response = None
+if "mic_key_counter" not in st.session_state:
+    st.session_state.mic_key_counter = 0
+if "last_transcription" not in st.session_state:
+    st.session_state.last_transcription = None
 
 # --- Header (stacked for mobile) ---
 if st.button("< Dashboard", use_container_width=False):
@@ -117,20 +121,27 @@ if st.session_state.interview_complete:
 st.markdown("---")
 st.markdown("**Tap the mic to record your response:**")
 
+# Dynamic key so the recorder resets after each turn
 audio = mic_recorder(
     start_prompt="🎤 Start Recording",
     stop_prompt="⏹️ Stop Recording",
-    just_once=True,
+    just_once=False,
     use_container_width=True,
-    key="mic_recorder",
+    key=f"mic_{st.session_state.mic_key_counter}",
 )
+
+# Show last transcription result
+if st.session_state.last_transcription:
+    st.caption(f"📝 You said: *\"{st.session_state.last_transcription}\"*")
 
 # --- Process recorded audio ---
 transcript_text = None
 if audio and audio["bytes"]:
-    with st.spinner("Transcribing..."):
+    with st.spinner("Transcribing your response..."):
         try:
             transcript_text = transcribe_audio(audio["bytes"])
+            if transcript_text:
+                st.session_state.last_transcription = transcript_text
         except Exception as e:
             st.error(f"Transcription failed: {e}")
 
@@ -162,6 +173,10 @@ if transcript_text:
         st.session_state.latest_audio_response = text_to_speech(response)
     except Exception:
         st.session_state.latest_audio_response = None
+
+    # Reset mic for next turn
+    st.session_state.mic_key_counter += 1
+    st.session_state.last_transcription = transcript_text
 
     # Check if interview is complete
     if is_interview_complete(response):
