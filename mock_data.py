@@ -1,0 +1,123 @@
+"""Mock Microsoft Dynamics CRM data for the Post-Meeting Interview Agent."""
+
+import streamlit as st
+
+MOCK_MEETINGS = [
+    {
+        "id": "MTG-001",
+        "client_name": "Acme Corp",
+        "client_contact": "Jane Smith, VP of Sales",
+        "date": "2026-03-28",
+        "time": "10:00 AM",
+        "type": "Discovery Call",
+        "deal_name": "Acme Corp - Enterprise License",
+        "deal_stage": "Qualification",
+        "deal_value": "$150,000",
+        "attendees": ["You", "Jane Smith", "Bob Johnson"],
+        "notes_pre": "First meeting to discuss their needs for enterprise-wide CRM deployment. They currently use a competitor product. KEY OBJECTIVE: Demo and discuss our 'Velocity AI' predictive analytics module -- this is the flagship feature that differentiates us. Also gauge interest in the 'CloudSync Pro' integration tier for their existing Salesforce data migration.",
+        "status": "pending",
+        "transcript": None,
+        "summary": None,
+    },
+    {
+        "id": "MTG-002",
+        "client_name": "TechVentures Inc",
+        "client_contact": "Michael Chen, CTO",
+        "date": "2026-03-28",
+        "time": "2:00 PM",
+        "type": "Proposal Review",
+        "deal_name": "TechVentures - Platform Migration",
+        "deal_stage": "Proposal",
+        "deal_value": "$320,000",
+        "attendees": ["You", "Michael Chen", "Sarah Lee", "David Park"],
+        "notes_pre": "Presenting our migration proposal. Key concern is downtime during transition. They want a phased approach. IMPORTANT: Must present the 'Zero-Downtime Migration Toolkit' -- engineering confirmed it's ready for enterprise preview. Also need to address their question from last call about SOC 2 Type II certification status.",
+        "status": "pending",
+        "transcript": None,
+        "summary": None,
+    },
+    {
+        "id": "MTG-003",
+        "client_name": "Global Logistics Co",
+        "client_contact": "Patricia Williams, Director of Operations",
+        "date": "2026-03-27",
+        "time": "11:00 AM",
+        "type": "Follow-up",
+        "deal_name": "Global Logistics - Supply Chain Module",
+        "deal_stage": "Negotiation",
+        "deal_value": "$85,000",
+        "attendees": ["You", "Patricia Williams"],
+        "notes_pre": "Follow-up on pricing discussion from last week. They want a 15% discount and extended payment terms. Need to present the 'Volume Licensing Bundle' as an alternative to a straight discount -- finance approved up to 3-year terms. Also check if they've completed their internal security review of our platform.",
+        "status": "pending",
+        "transcript": None,
+        "summary": None,
+    },
+    {
+        "id": "MTG-004",
+        "client_name": "Meridian Health Systems",
+        "client_contact": "Dr. Robert Nguyen, Chief Digital Officer",
+        "date": "2026-03-27",
+        "time": "3:30 PM",
+        "type": "Discovery Call",
+        "deal_name": "Meridian Health - Patient Portal",
+        "deal_stage": "Qualification",
+        "deal_value": "$210,000",
+        "attendees": ["You", "Dr. Robert Nguyen", "Amanda Torres, IT Director"],
+        "notes_pre": "Initial meeting about patient portal needs. HIPAA compliance is a must. They are evaluating three vendors.",
+        "status": "pending",
+        "transcript": None,
+        "summary": None,
+    },
+    {
+        "id": "MTG-005",
+        "client_name": "Summit Financial Group",
+        "client_contact": "Karen O'Brien, Head of Partnerships",
+        "date": "2026-03-26",
+        "time": "9:00 AM",
+        "type": "Negotiation",
+        "deal_name": "Summit Financial - Analytics Dashboard",
+        "deal_stage": "Closed Won",
+        "deal_value": "$175,000",
+        "attendees": ["You", "Karen O'Brien", "James Mitchell, CFO"],
+        "notes_pre": "Final contract negotiation. Legal has reviewed terms. Expected to close today.",
+        "status": "pending",
+        "transcript": None,
+        "summary": None,
+    },
+]
+
+
+def init_meetings():
+    """Initialize meetings in session state if not already present."""
+    if "meetings" not in st.session_state:
+        import copy
+        st.session_state.meetings = copy.deepcopy(MOCK_MEETINGS)
+
+
+def get_all_meetings() -> list[dict]:
+    """Return all meetings from session state."""
+    init_meetings()
+    return st.session_state.meetings
+
+
+def get_meeting(meeting_id: str) -> dict | None:
+    """Return a single meeting by ID."""
+    init_meetings()
+    for meeting in st.session_state.meetings:
+        if meeting["id"] == meeting_id:
+            return meeting
+    return None
+
+
+def update_meeting_status(
+    meeting_id: str, status: str, transcript: list | None = None, summary: dict | None = None
+):
+    """Update a meeting's status and optionally store transcript/summary."""
+    init_meetings()
+    for meeting in st.session_state.meetings:
+        if meeting["id"] == meeting_id:
+            meeting["status"] = status
+            if transcript is not None:
+                meeting["transcript"] = transcript
+            if summary is not None:
+                meeting["summary"] = summary
+            break
