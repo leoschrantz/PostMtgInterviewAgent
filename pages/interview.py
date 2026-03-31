@@ -149,6 +149,18 @@ if st.session_state.show_recap_form:
 st.markdown("### Step 1: Have your debrief conversation")
 st.caption("Tap the call button to start. The AI interviewer will ask you about your meeting.")
 
+# Pin the ElevenLabs floating widget to bottom-right, prevent it from jumping around
+st.markdown("""
+<style>
+    elevenlabs-convai {
+        position: fixed !important;
+        bottom: 20px !important;
+        right: 20px !important;
+        z-index: 9999 !important;
+    }
+</style>
+""", unsafe_allow_html=True)
+
 _elevenlabs_widget = st.components.v2.component(
     "elevenlabs_widget",
     html="""<div id="elevenlabs-container"></div>""",
