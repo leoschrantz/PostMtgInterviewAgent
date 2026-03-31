@@ -1,6 +1,7 @@
-"""Claude API summarization logic."""
+"""Claude API summarization + ElevenLabs transcript retrieval."""
 
 import json
+import requests
 import streamlit as st
 import anthropic
 
@@ -29,6 +30,59 @@ Output ONLY valid JSON with this exact structure (no markdown, no code fences):
     "follow_up_date": "suggested next follow-up date",
     "additional_notes": "anything else noteworthy from the conversation"
 }"""
+
+
+def get_latest_conversation_id(agent_id: str) -> str | None:
+    """Get the most recent conversation ID for an agent."""
+    resp = requests.get(
+        "https://api.elevenlabs.io/v1/convai/conversations",
+        headers={"xi-api-key": st.secrets["ELEVENLABS_API_KEY"]},
+        params={"agent_id": agent_id},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    conversations = resp.json().get("conversations", [])
+    if conversations:
+        return conversations[0].get("conversation_id")
+    return None
+
+
+def fetch_conversation_transcript(conversation_id: str) -> list[dict] | None:
+    """Fetch the transcript from an ElevenLabs conversation."""
+    resp = requests.get(
+        f"https://api.elevenlabs.io/v1/convai/conversations/{conversation_id}",
+        headers={"xi-api-key": st.secrets["ELEVENLABS_API_KEY"]},
+        timeout=30,
+    )
+    if resp.status_code == 401:
+        st.error(
+            f"ElevenLabs API returned 401 Unauthorized. "
+            f"Make sure your ELEVENLABS_API_KEY in Streamlit secrets belongs to "
+            f"the same account that created the agent. "
+            f"Response: {resp.text}"
+        )
+        return None
+    resp.raise_for_status()
+    data = resp.json()
+
+    transcript_entries = data.get("transcript", [])
+    if not transcript_entries:
+        # Conversation might still be processing
+        status = data.get("status", "unknown")
+        if status in ("initiated", "in-progress", "processing"):
+            return None  # Not ready yet
+        return []
+
+    messages = []
+    for entry in transcript_entries:
+        role_raw = entry.get("role", "")
+        content = entry.get("message", "")
+        if not content:
+            continue
+        role = "assistant" if role_raw == "agent" else "user"
+        messages.append({"role": role, "content": content})
+
+    return messages if messages else None
 
 
 def generate_summary(transcript: list[dict], meeting: dict) -> dict:

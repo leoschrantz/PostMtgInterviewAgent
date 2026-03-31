@@ -3,7 +3,7 @@
 import json
 import streamlit as st
 from mock_data import get_meeting, update_meeting_status
-from agent import generate_summary
+from agent import generate_summary, get_latest_conversation_id, fetch_conversation_transcript
 from utils import save_interview
 
 AGENT_ID = "agent_7901kn0qbhyzem5ac63stkxkqtst"
@@ -25,6 +25,8 @@ if "current_summary" not in st.session_state:
     st.session_state.current_summary = None
 if "interview_complete" not in st.session_state:
     st.session_state.interview_complete = False
+if "fetching_transcript" not in st.session_state:
+    st.session_state.fetching_transcript = False
 if "show_recap_form" not in st.session_state:
     st.session_state.show_recap_form = False
 
@@ -48,18 +50,61 @@ meeting_context = (
 
 dynamic_vars = {"meeting_context": meeting_context}
 
-# --- Summary generation ---
-if st.session_state.interview_complete:
-    if not st.session_state.current_summary:
-        st.info("Generating summary...")
-        st.stop()
-
+# --- Summary complete ---
+if st.session_state.interview_complete and st.session_state.current_summary:
     st.success("Interview complete! Summary generated.")
     if st.button("View Summary", type="primary", use_container_width=True):
         st.switch_page("pages/summary.py")
     st.stop()
 
-# --- Recap form (shown after voice conversation) ---
+# --- Transcript fetch + summary generation ---
+if st.session_state.fetching_transcript:
+    with st.spinner("Fetching conversation transcript from ElevenLabs..."):
+        try:
+            # Get the most recent conversation for this agent
+            conv_id = get_latest_conversation_id(AGENT_ID)
+            if conv_id:
+                transcript = fetch_conversation_transcript(conv_id)
+                if transcript:
+                    st.success(f"Transcript retrieved! ({len(transcript)} messages)")
+                    with st.spinner("Claude is generating your structured summary..."):
+                        summary = generate_summary(transcript, meeting)
+                        st.session_state.current_summary = summary
+                        st.session_state.interview_complete = True
+
+                        update_meeting_status(
+                            meeting["id"], "complete",
+                            transcript=transcript,
+                            summary=summary,
+                        )
+                        save_interview(meeting["id"], transcript, summary)
+                        st.rerun()
+                elif transcript is None:
+                    st.warning("Conversation is still processing. Wait a few seconds and try again.")
+                    st.session_state.fetching_transcript = False
+                else:
+                    st.warning("Transcript was empty. The conversation may not have had any messages.")
+                    st.session_state.fetching_transcript = False
+            else:
+                st.warning("No conversations found for this agent. Make sure you've completed a call first.")
+                st.session_state.fetching_transcript = False
+        except Exception as e:
+            st.error(f"Error: {e}")
+            st.session_state.fetching_transcript = False
+
+    if not st.session_state.interview_complete:
+        if st.button("Try Again", use_container_width=True):
+            st.session_state.fetching_transcript = True
+            st.rerun()
+        st.markdown("---")
+        st.caption("If the transcript keeps failing, you can write a quick recap instead:")
+        if st.button("Write recap manually instead", use_container_width=True):
+            st.session_state.fetching_transcript = False
+            st.session_state.show_recap_form = True
+            st.rerun()
+    st.stop()
+
+# --- Manual recap fallback ---
 if st.session_state.show_recap_form:
     st.markdown("### Quick Recap")
     st.markdown("Jot down the key points from your conversation so we can generate a structured summary.")
@@ -80,7 +125,6 @@ if st.session_state.show_recap_form:
     if st.button("Generate Summary", type="primary", use_container_width=True):
         if recap_text.strip():
             with st.spinner("Claude is generating your structured summary..."):
-                # Build a transcript-like format from the recap
                 transcript = [
                     {"role": "user", "content": f"Here is my post-meeting debrief recap:\n\n{recap_text}"},
                 ]
@@ -88,7 +132,6 @@ if st.session_state.show_recap_form:
                     summary = generate_summary(transcript, meeting)
                     st.session_state.current_summary = summary
                     st.session_state.interview_complete = True
-
                     update_meeting_status(
                         meeting["id"], "complete",
                         transcript=transcript,
@@ -99,19 +142,16 @@ if st.session_state.show_recap_form:
                 except Exception as e:
                     st.error(f"Error generating summary: {e}")
         else:
-            st.warning("Please enter some notes about the conversation before generating the summary.")
+            st.warning("Please enter some notes first.")
     st.stop()
 
 # --- ElevenLabs Conversational AI Widget ---
 st.markdown("### Step 1: Have your debrief conversation")
 st.caption("Tap the call button to start. The AI interviewer will ask you about your meeting.")
 
-# v2 component renders in DOM (not iframe) for mic/speaker access
 _elevenlabs_widget = st.components.v2.component(
     "elevenlabs_widget",
-    html="""
-    <div id="elevenlabs-container"></div>
-    """,
+    html="""<div id="elevenlabs-container"></div>""",
     js="""
     export default function({ parentElement, data }) {
         const container = parentElement.querySelector('#elevenlabs-container');
@@ -139,10 +179,11 @@ _elevenlabs_widget(
     height=200,
 )
 
-# --- Transition to recap ---
+# --- End interview ---
 st.markdown("---")
-st.markdown("### Step 2: After your call, capture the key points")
+st.markdown("### Step 2: End the call, then generate your summary")
+st.caption("Hang up in the widget first, then click the button below.")
 
-if st.button("I'm done with the call - write up my recap", type="primary", use_container_width=True):
-    st.session_state.show_recap_form = True
+if st.button("End Interview & Generate Summary", type="primary", use_container_width=True):
+    st.session_state.fetching_transcript = True
     st.rerun()
