@@ -2,7 +2,6 @@
 
 import json
 import streamlit as st
-import streamlit.components.v1 as components
 from mock_data import get_meeting, update_meeting_status
 from agent import generate_summary, fetch_conversation_transcript
 from utils import save_interview
@@ -89,6 +88,7 @@ if st.session_state.interview_complete and st.session_state.conversation_id:
 st.markdown("**Tap the call button below to start your debrief conversation:**")
 st.caption("The AI interviewer will ask you questions about your meeting. Just talk naturally -- no buttons needed between turns.")
 
+# Render directly into the page DOM (not in an iframe) so mic/speaker permissions work
 widget_html = f"""
 <elevenlabs-convai
     agent-id="{AGENT_ID}"
@@ -101,7 +101,7 @@ widget_html = f"""
 ></script>
 """
 
-components.html(widget_html, height=200)
+st.markdown(widget_html, unsafe_allow_html=True)
 
 # --- Manual conversation ID input + end button ---
 st.markdown("---")
