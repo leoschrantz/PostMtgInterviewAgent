@@ -1,5 +1,6 @@
 """Interview page - ElevenLabs conversational AI widget for post-meeting debrief."""
 
+import json
 import streamlit as st
 import streamlit.components.v1 as components
 from mock_data import get_meeting, update_meeting_status
@@ -36,18 +37,20 @@ st.caption(f"{meeting['date']}  |  {meeting['deal_name']}  |  {meeting['deal_sta
 
 st.divider()
 
-# --- Build meeting context for the agent's system prompt ---
+# --- Build meeting context for the agent's dynamic variables ---
 meeting_context = (
-    f"Client: {meeting['client_name']} ({meeting['client_contact']})\n"
-    f"Meeting type: {meeting['type']}\n"
-    f"Deal: {meeting['deal_name']} - {meeting['deal_stage']} - {meeting['deal_value']}\n"
-    f"Date: {meeting['date']} at {meeting['time']}\n"
-    f"Attendees: {', '.join(meeting['attendees'])}\n"
+    f"Client: {meeting['client_name']} ({meeting['client_contact']}). "
+    f"Meeting type: {meeting['type']}. "
+    f"Deal: {meeting['deal_name']} - {meeting['deal_stage']} - {meeting['deal_value']}. "
+    f"Date: {meeting['date']} at {meeting['time']}. "
+    f"Attendees: {', '.join(meeting['attendees'])}. "
     f"Pre-meeting notes: {meeting['notes_pre']}"
 )
 
-# Escape for safe JS embedding
-meeting_context_js = meeting_context.replace("\\", "\\\\").replace("`", "\\`").replace("$", "\\$").replace("\n", "\\n")
+# JSON-encode the dynamic variables to safely escape all special chars
+dynamic_vars = json.dumps({"meeting_context": meeting_context})
+# Escape single quotes for the HTML attribute
+dynamic_vars_attr = dynamic_vars.replace("'", "&#39;")
 
 # --- Interview complete: show summary flow ---
 if st.session_state.interview_complete and st.session_state.conversation_id:
@@ -68,85 +71,53 @@ if st.session_state.interview_complete and st.session_state.conversation_id:
                     )
                     save_interview(meeting["id"], transcript, summary)
                 else:
-                    st.warning("Could not retrieve transcript. The conversation may still be processing.")
+                    st.warning("Could not retrieve transcript yet. The conversation may still be processing. Try again in a moment.")
+                    if st.button("Retry", use_container_width=True):
+                        st.rerun()
             except Exception as e:
                 st.error(f"Error fetching transcript: {e}")
+                if st.button("Retry", use_container_width=True):
+                    st.rerun()
 
     if st.session_state.current_summary:
         st.success("Interview complete! Summary generated.")
         if st.button("View Summary", type="primary", use_container_width=True):
             st.switch_page("pages/summary.py")
-        st.stop()
+    st.stop()
 
 # --- ElevenLabs Conversational AI Widget ---
-st.markdown("**Tap the mic below to start your debrief conversation:**")
-st.caption("The AI interviewer will ask you questions about your meeting. Just talk naturally.")
+st.markdown("**Tap the call button below to start your debrief conversation:**")
+st.caption("The AI interviewer will ask you questions about your meeting. Just talk naturally -- no buttons needed between turns.")
 
 widget_html = f"""
-<script src="https://cdn.jsdelivr.net/npm/@elevenlabs/convai-widget@latest/dist/index.js" async></script>
-<div id="widget-container" style="display:flex; flex-direction:column; align-items:center; padding:20px 0;">
-    <elevenlabs-convai
-        agent-id="{AGENT_ID}"
-        dynamic-variables='{{"meeting_context": "{meeting_context_js}"}}'
-    ></elevenlabs-convai>
-    <div id="conv-status" style="margin-top:16px; font-size:0.9em; color:#666;"></div>
-    <button id="end-btn" onclick="endConversation()" style="
-        display:none; margin-top:12px; padding:12px 24px;
-        background:#0066cc; color:white; border:none; border-radius:8px;
-        font-size:1em; cursor:pointer; width:100%;
-    ">End Interview & Generate Summary</button>
-</div>
-<script>
-    // Listen for the widget to be ready and capture conversation ID
-    let convId = null;
-    const widget = document.querySelector('elevenlabs-convai');
-
-    if (widget) {{
-        widget.addEventListener('elevenlabs-convai:call', (event) => {{
-            if (event.detail && event.detail.conversationId) {{
-                convId = event.detail.conversationId;
-                document.getElementById('conv-status').textContent = 'Conversation active...';
-                document.getElementById('end-btn').style.display = 'block';
-            }}
-        }});
-
-        widget.addEventListener('elevenlabs-convai:call:ended', (event) => {{
-            if (event.detail && event.detail.conversationId) {{
-                convId = event.detail.conversationId;
-            }}
-            document.getElementById('conv-status').textContent = 'Conversation ended.';
-        }});
-    }}
-
-    function endConversation() {{
-        // Post the conversation ID back to Streamlit via query params
-        if (convId) {{
-            // Use URL to pass data back to Streamlit
-            const url = new URL(window.parent.location.href);
-            url.searchParams.set('conv_id', convId);
-            url.searchParams.set('done', 'true');
-            window.parent.location.href = url.toString();
-        }} else {{
-            document.getElementById('conv-status').textContent = 'No conversation to end. Start talking first!';
-        }}
-    }}
-</script>
+<elevenlabs-convai
+    agent-id="{AGENT_ID}"
+    dynamic-variables='{dynamic_vars_attr}'
+></elevenlabs-convai>
+<script
+    src="https://unpkg.com/@elevenlabs/convai-widget-embed"
+    async
+    type="text/javascript"
+></script>
 """
 
-components.html(widget_html, height=400)
+components.html(widget_html, height=200)
 
-# --- Check if returning from conversation end ---
-query_params = st.query_params
-conv_id = query_params.get("conv_id")
-done = query_params.get("done")
-
-if done == "true" and conv_id:
-    st.session_state.conversation_id = conv_id
-    st.session_state.interview_complete = True
-    # Clear query params
-    st.query_params.clear()
-    st.rerun()
-
-# --- Text fallback note ---
+# --- Manual conversation ID input + end button ---
 st.markdown("---")
-st.caption("If voice isn't working, you can use the text input in the ElevenLabs widget.")
+st.markdown("When you're done with the conversation, paste the conversation ID below and click End Interview.")
+st.caption("You can find the conversation ID in the ElevenLabs dashboard under Conversations, or just click End Interview to enter it.")
+
+conv_id_input = st.text_input(
+    "Conversation ID (from ElevenLabs)",
+    value=st.session_state.get("conversation_id", ""),
+    placeholder="e.g. abc123def456...",
+)
+
+if st.button("End Interview & Generate Summary", type="primary", use_container_width=True):
+    if conv_id_input:
+        st.session_state.conversation_id = conv_id_input
+        st.session_state.interview_complete = True
+        st.rerun()
+    else:
+        st.warning("Please enter the conversation ID from ElevenLabs to generate the summary.")
