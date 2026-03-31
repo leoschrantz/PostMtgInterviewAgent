@@ -364,7 +364,16 @@ _voice_widget = st.components.v2.component(
                 // Connect WebSocket
                 ws = new WebSocket(wsUrl);
 
+                // Timeout if we don't get 'ready' within 15 seconds
+                let connectTimeout = setTimeout(() => {
+                    if (isActive) {
+                        setStatus('Connection timed out. Check voice server logs.');
+                        stopConversation();
+                    }
+                }, 15000);
+
                 ws.onopen = () => {
+                    setStatus('Connected to server, starting voice agent...');
                     // Send config as first message
                     ws.send(JSON.stringify({
                         type: 'config',
@@ -376,7 +385,8 @@ _voice_widget = st.components.v2.component(
                     const msg = JSON.parse(event.data);
 
                     if (msg.type === 'ready') {
-                        setStatus('Connected! Speak naturally...');
+                        clearTimeout(connectTimeout);
+                        setStatus('Interviewer is speaking...');
                         startMicCapture();
                     } else if (msg.type === 'audio') {
                         playAudioChunk(msg.data);
@@ -384,23 +394,34 @@ _voice_widget = st.components.v2.component(
                         setTimeout(() => { indicator.style.width = '0%'; }, 200);
                     } else if (msg.type === 'transcript') {
                         addTranscript(msg.role, msg.text, msg.finished);
+                        if (msg.role === 'user') {
+                            setStatus('Listening...');
+                        } else {
+                            setStatus('Interviewer is speaking...');
+                        }
                     } else if (msg.type === 'turn_complete') {
                         indicator.style.width = '0%';
+                        setStatus('Your turn — speak when ready');
                     } else if (msg.type === 'interrupted') {
                         // Clear playback queue on barge-in
                         playbackQueue = [];
+                        setStatus('Listening...');
                     } else if (msg.type === 'error') {
+                        clearTimeout(connectTimeout);
                         setStatus('Error: ' + msg.message);
+                        stopConversation();
                     }
                 };
 
                 ws.onerror = () => {
-                    setStatus('Connection error. Is the voice server running?');
+                    clearTimeout(connectTimeout);
+                    setStatus('Connection error. Is the voice server running on port ' + wsPort + '?');
                 };
 
-                ws.onclose = () => {
+                ws.onclose = (event) => {
+                    clearTimeout(connectTimeout);
                     if (isActive) {
-                        setStatus('Connection closed.');
+                        setStatus('Connection closed' + (event.reason ? ': ' + event.reason : '. Check server logs.'));
                         stopConversation();
                     }
                 };

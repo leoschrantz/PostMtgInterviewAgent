@@ -27,7 +27,9 @@ app.add_middleware(
 )
 
 # Gemini model for Live API
-GEMINI_LIVE_MODEL = "gemini-2.5-flash-preview-native-audio-dialog"
+# Use gemini-2.0-flash-live-001 for broad availability; upgrade to
+# gemini-2.5-flash-preview-native-audio-dialog when your key supports it.
+GEMINI_LIVE_MODEL = "gemini-2.0-flash-live-001"
 
 INTERVIEWER_SYSTEM_PROMPT = """You are a friendly, professional post-meeting debrief interviewer for a sales team. Your job is to conduct a brief voice conversation to capture what happened in a client meeting.
 
@@ -113,9 +115,33 @@ async def voice_stream(websocket: WebSocket, session_id: str):
             output_audio_transcription=types.AudioTranscriptionConfig(),
         )
 
-        async with client.aio.live.connect(
-            model=GEMINI_LIVE_MODEL, config=live_config
-        ) as gemini_session:
+        try:
+            gemini_conn = client.aio.live.connect(
+                model=GEMINI_LIVE_MODEL, config=live_config
+            )
+            gemini_session = await gemini_conn.__aenter__()
+        except Exception as e:
+            logger.exception("Failed to connect to Gemini Live API")
+            await websocket.send_json({
+                "type": "error",
+                "message": f"Gemini connection failed: {e}",
+            })
+            await websocket.close()
+            return
+
+        try:
+            # Send initial prompt so the agent speaks first
+            await gemini_session.send_client_content(
+                turns=types.Content(
+                    role="user",
+                    parts=[types.Part(text=(
+                        "The salesperson just joined the debrief. "
+                        "Greet them warmly and ask how the meeting went overall. "
+                        "Keep it brief and natural — one or two sentences."
+                    ))],
+                ),
+                turn_complete=True,
+            )
 
             # Signal ready to client
             await websocket.send_json({"type": "ready"})
@@ -245,6 +271,13 @@ async def voice_stream(websocket: WebSocket, session_id: str):
                     await gemini_task
                 except asyncio.CancelledError:
                     pass
+
+        finally:
+            # Clean up the Gemini session
+            try:
+                await gemini_conn.__aexit__(None, None, None)
+            except Exception:
+                pass
 
     except WebSocketDisconnect:
         pass
