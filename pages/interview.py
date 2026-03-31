@@ -1,17 +1,12 @@
-"""Interview page - voice-based post-meeting debrief with Claude."""
+"""Interview page - ElevenLabs conversational AI widget for post-meeting debrief."""
 
 import streamlit as st
-from streamlit_mic_recorder import mic_recorder
+import streamlit.components.v1 as components
 from mock_data import get_meeting, update_meeting_status
-from agent import (
-    get_interview_response,
-    get_opening_question,
-    generate_summary,
-    is_interview_complete,
-    transcribe_audio,
-    text_to_speech,
-)
+from agent import generate_summary, fetch_conversation_transcript
 from utils import save_interview
+
+AGENT_ID = "agent_7901kn0qbhyzem5ac63stkxkqtst"
 
 # --- Guard: must have an active meeting ---
 if "active_meeting_id" not in st.session_state or not st.session_state.active_meeting_id:
@@ -26,22 +21,12 @@ if not meeting:
     st.stop()
 
 # --- Initialize session state ---
-if "conversation_history" not in st.session_state:
-    st.session_state.conversation_history = []
-if "interview_started" not in st.session_state:
-    st.session_state.interview_started = False
-if "interview_complete" not in st.session_state:
-    st.session_state.interview_complete = False
 if "current_summary" not in st.session_state:
     st.session_state.current_summary = None
-if "generating_summary" not in st.session_state:
-    st.session_state.generating_summary = False
-if "latest_audio_response" not in st.session_state:
-    st.session_state.latest_audio_response = None
-if "mic_key_counter" not in st.session_state:
-    st.session_state.mic_key_counter = 0
-if "last_transcription" not in st.session_state:
-    st.session_state.last_transcription = None
+if "conversation_id" not in st.session_state:
+    st.session_state.conversation_id = None
+if "interview_complete" not in st.session_state:
+    st.session_state.interview_complete = False
 
 # --- Header (stacked for mobile) ---
 if st.button("< Dashboard", use_container_width=False):
@@ -51,141 +36,117 @@ st.caption(f"{meeting['date']}  |  {meeting['deal_name']}  |  {meeting['deal_sta
 
 st.divider()
 
-# --- Start the interview (get opening question from Claude) ---
-if not st.session_state.interview_started:
-    with st.spinner("Starting interview..."):
-        opening = get_opening_question(meeting)
-        st.session_state.conversation_history = [
-            {"role": "user", "content": "Hi, I just finished the meeting. Ready to debrief."},
-            {"role": "assistant", "content": opening},
-        ]
-        # Generate TTS for the opening question
-        try:
-            st.session_state.latest_audio_response = text_to_speech(opening)
-        except Exception:
-            st.session_state.latest_audio_response = None
-        st.session_state.interview_started = True
-        st.rerun()
-
-# --- Display conversation history ---
-for msg in st.session_state.conversation_history:
-    if msg["role"] == "assistant":
-        with st.chat_message("assistant", avatar="🤖"):
-            st.write(msg["content"])
-    elif msg["role"] == "user":
-        # Skip the initial "ready to debrief" message in display
-        if msg["content"] == "Hi, I just finished the meeting. Ready to debrief.":
-            continue
-        with st.chat_message("user", avatar="👤"):
-            st.write(msg["content"])
-
-# --- Play latest agent audio response ---
-if st.session_state.latest_audio_response:
-    st.audio(st.session_state.latest_audio_response, format="audio/mp3", autoplay=True)
-
-# --- Interview complete: show summary button ---
-if st.session_state.interview_complete:
-    st.success("Interview complete! Generating summary...")
-    if not st.session_state.current_summary and not st.session_state.generating_summary:
-        st.session_state.generating_summary = True
-        st.rerun()
-
-    if st.session_state.generating_summary and not st.session_state.current_summary:
-        with st.spinner("Claude is summarizing your debrief..."):
-            summary = generate_summary(
-                st.session_state.conversation_history, meeting
-            )
-            st.session_state.current_summary = summary
-            st.session_state.generating_summary = False
-
-            # Save to mock data and file
-            update_meeting_status(
-                meeting["id"], "complete",
-                transcript=st.session_state.conversation_history,
-                summary=summary,
-            )
-            save_interview(
-                meeting["id"],
-                st.session_state.conversation_history,
-                summary,
-            )
-            st.rerun()
-
-    if st.session_state.current_summary:
-        st.session_state.active_meeting_id = meeting["id"]
-        if st.button("View Summary", type="primary", use_container_width=True):
-            st.switch_page("pages/summary.py")
-    st.stop()
-
-# --- Voice recording ---
-st.markdown("---")
-st.markdown("**Tap the mic to record your response:**")
-
-# Dynamic key so the recorder resets after each turn
-audio = mic_recorder(
-    start_prompt="🎤 Start Recording",
-    stop_prompt="⏹️ Stop Recording",
-    just_once=False,
-    use_container_width=True,
-    key=f"mic_{st.session_state.mic_key_counter}",
+# --- Build meeting context for the agent's system prompt ---
+meeting_context = (
+    f"Client: {meeting['client_name']} ({meeting['client_contact']})\n"
+    f"Meeting type: {meeting['type']}\n"
+    f"Deal: {meeting['deal_name']} - {meeting['deal_stage']} - {meeting['deal_value']}\n"
+    f"Date: {meeting['date']} at {meeting['time']}\n"
+    f"Attendees: {', '.join(meeting['attendees'])}\n"
+    f"Pre-meeting notes: {meeting['notes_pre']}"
 )
 
-# Show last transcription result
-if st.session_state.last_transcription:
-    st.caption(f"📝 You said: *\"{st.session_state.last_transcription}\"*")
+# Escape for safe JS embedding
+meeting_context_js = meeting_context.replace("\\", "\\\\").replace("`", "\\`").replace("$", "\\$").replace("\n", "\\n")
 
-# --- Process recorded audio ---
-transcript_text = None
-if audio and audio["bytes"]:
-    with st.spinner("Transcribing your response..."):
-        try:
-            transcript_text = transcribe_audio(audio["bytes"])
-            if transcript_text:
-                st.session_state.last_transcription = transcript_text
-        except Exception as e:
-            st.error(f"Transcription failed: {e}")
+# --- Interview complete: show summary flow ---
+if st.session_state.interview_complete and st.session_state.conversation_id:
+    if not st.session_state.current_summary:
+        with st.spinner("Fetching transcript and generating summary..."):
+            try:
+                transcript = fetch_conversation_transcript(
+                    st.session_state.conversation_id
+                )
+                if transcript:
+                    summary = generate_summary(transcript, meeting)
+                    st.session_state.current_summary = summary
 
-# --- Text input fallback ---
-text_input = st.chat_input("Or type your response here...")
-if text_input:
-    transcript_text = text_input
+                    update_meeting_status(
+                        meeting["id"], "complete",
+                        transcript=transcript,
+                        summary=summary,
+                    )
+                    save_interview(meeting["id"], transcript, summary)
+                else:
+                    st.warning("Could not retrieve transcript. The conversation may still be processing.")
+            except Exception as e:
+                st.error(f"Error fetching transcript: {e}")
 
-# --- Handle new user input ---
-if transcript_text:
-    # Add user message to history
-    st.session_state.conversation_history.append(
-        {"role": "user", "content": transcript_text}
-    )
+    if st.session_state.current_summary:
+        st.success("Interview complete! Summary generated.")
+        if st.button("View Summary", type="primary", use_container_width=True):
+            st.switch_page("pages/summary.py")
+        st.stop()
 
-    # Get Claude's response
-    with st.spinner("Thinking..."):
-        response = get_interview_response(
-            st.session_state.conversation_history, meeting
-        )
+# --- ElevenLabs Conversational AI Widget ---
+st.markdown("**Tap the mic below to start your debrief conversation:**")
+st.caption("The AI interviewer will ask you questions about your meeting. Just talk naturally.")
 
-    # Add assistant message to history
-    st.session_state.conversation_history.append(
-        {"role": "assistant", "content": response}
-    )
+widget_html = f"""
+<script src="https://cdn.jsdelivr.net/npm/@elevenlabs/convai-widget@latest/dist/index.js" async></script>
+<div id="widget-container" style="display:flex; flex-direction:column; align-items:center; padding:20px 0;">
+    <elevenlabs-convai
+        agent-id="{AGENT_ID}"
+        dynamic-variables='{{"meeting_context": "{meeting_context_js}"}}'
+    ></elevenlabs-convai>
+    <div id="conv-status" style="margin-top:16px; font-size:0.9em; color:#666;"></div>
+    <button id="end-btn" onclick="endConversation()" style="
+        display:none; margin-top:12px; padding:12px 24px;
+        background:#0066cc; color:white; border:none; border-radius:8px;
+        font-size:1em; cursor:pointer; width:100%;
+    ">End Interview & Generate Summary</button>
+</div>
+<script>
+    // Listen for the widget to be ready and capture conversation ID
+    let convId = null;
+    const widget = document.querySelector('elevenlabs-convai');
 
-    # Generate TTS for the response
-    try:
-        st.session_state.latest_audio_response = text_to_speech(response)
-    except Exception:
-        st.session_state.latest_audio_response = None
+    if (widget) {{
+        widget.addEventListener('elevenlabs-convai:call', (event) => {{
+            if (event.detail && event.detail.conversationId) {{
+                convId = event.detail.conversationId;
+                document.getElementById('conv-status').textContent = 'Conversation active...';
+                document.getElementById('end-btn').style.display = 'block';
+            }}
+        }});
 
-    # Reset mic for next turn
-    st.session_state.mic_key_counter += 1
-    st.session_state.last_transcription = transcript_text
+        widget.addEventListener('elevenlabs-convai:call:ended', (event) => {{
+            if (event.detail && event.detail.conversationId) {{
+                convId = event.detail.conversationId;
+            }}
+            document.getElementById('conv-status').textContent = 'Conversation ended.';
+        }});
+    }}
 
-    # Check if interview is complete
-    if is_interview_complete(response):
-        st.session_state.interview_complete = True
+    function endConversation() {{
+        // Post the conversation ID back to Streamlit via query params
+        if (convId) {{
+            // Use URL to pass data back to Streamlit
+            const url = new URL(window.parent.location.href);
+            url.searchParams.set('conv_id', convId);
+            url.searchParams.set('done', 'true');
+            window.parent.location.href = url.toString();
+        }} else {{
+            document.getElementById('conv-status').textContent = 'No conversation to end. Start talking first!';
+        }}
+    }}
+</script>
+"""
 
-    st.rerun()
+components.html(widget_html, height=400)
 
-# --- Manual end interview button ---
-st.markdown("---")
-if st.button("End Interview & Generate Summary", use_container_width=True):
+# --- Check if returning from conversation end ---
+query_params = st.query_params
+conv_id = query_params.get("conv_id")
+done = query_params.get("done")
+
+if done == "true" and conv_id:
+    st.session_state.conversation_id = conv_id
     st.session_state.interview_complete = True
+    # Clear query params
+    st.query_params.clear()
     st.rerun()
+
+# --- Text fallback note ---
+st.markdown("---")
+st.caption("If voice isn't working, you can use the text input in the ElevenLabs widget.")
