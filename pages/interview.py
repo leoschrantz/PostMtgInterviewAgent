@@ -2,6 +2,7 @@
 
 import json
 import streamlit as st
+from pathlib import Path
 from mock_data import get_meeting, update_meeting_status
 from agent import generate_summary, fetch_conversation_transcript
 from utils import save_interview
@@ -88,20 +89,38 @@ if st.session_state.interview_complete and st.session_state.conversation_id:
 st.markdown("**Tap the call button below to start your debrief conversation:**")
 st.caption("The AI interviewer will ask you questions about your meeting. Just talk naturally -- no buttons needed between turns.")
 
-# Render directly into the page DOM (not in an iframe) so mic/speaker permissions work
-widget_html = f"""
-<elevenlabs-convai
-    agent-id="{AGENT_ID}"
-    dynamic-variables='{dynamic_vars_attr}'
-></elevenlabs-convai>
-<script
-    src="https://unpkg.com/@elevenlabs/convai-widget-embed"
-    async
-    type="text/javascript"
-></script>
-"""
+# Use a v2 component with isolate_styles=False to render directly in the DOM
+# (no iframe = mic/speaker permissions work, script tags execute)
+_elevenlabs_widget = st.components.v2.component(
+    "elevenlabs_widget",
+    html=f"""
+    <div id="elevenlabs-container"></div>
+    """,
+    js=f"""
+    export default function({{ parentElement }}) {{
+        const container = parentElement.querySelector('#elevenlabs-container');
+        if (!container) return;
+        // Only initialize once
+        if (container.dataset.initialized === 'true') return;
+        container.dataset.initialized = 'true';
 
-st.markdown(widget_html, unsafe_allow_html=True)
+        // Create and insert the widget element
+        const widget = document.createElement('elevenlabs-convai');
+        widget.setAttribute('agent-id', '{AGENT_ID}');
+        widget.setAttribute('dynamic-variables', '{dynamic_vars_attr}');
+        container.appendChild(widget);
+
+        // Load the ElevenLabs widget script
+        const script = document.createElement('script');
+        script.src = 'https://unpkg.com/@elevenlabs/convai-widget-embed';
+        script.async = true;
+        document.head.appendChild(script);
+    }}
+    """,
+    isolate_styles=False,
+)
+
+_elevenlabs_widget(key="elevenlabs_voice", height=200)
 
 # --- Manual conversation ID input + end button ---
 st.markdown("---")
