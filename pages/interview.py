@@ -47,10 +47,8 @@ meeting_context = (
     f"Pre-meeting notes: {meeting['notes_pre']}"
 )
 
-# JSON-encode the dynamic variables to safely escape all special chars
-dynamic_vars = json.dumps({"meeting_context": meeting_context})
-# Escape single quotes for the HTML attribute
-dynamic_vars_attr = dynamic_vars.replace("'", "&#39;")
+# Build the dynamic variables dict for the widget
+dynamic_vars = {"meeting_context": meeting_context}
 
 # --- Interview complete: show summary flow ---
 if st.session_state.interview_complete and st.session_state.conversation_id:
@@ -91,23 +89,27 @@ st.caption("The AI interviewer will ask you questions about your meeting. Just t
 
 # Use a v2 component with isolate_styles=False to render directly in the DOM
 # (no iframe = mic/speaker permissions work, script tags execute)
+# Pass dynamic vars via data parameter (properly JSON-serialized by Streamlit)
 _elevenlabs_widget = st.components.v2.component(
     "elevenlabs_widget",
-    html=f"""
+    html="""
     <div id="elevenlabs-container"></div>
     """,
-    js=f"""
-    export default function({{ parentElement }}) {{
+    js="""
+    export default function({ parentElement, data }) {
         const container = parentElement.querySelector('#elevenlabs-container');
         if (!container) return;
         // Only initialize once
         if (container.dataset.initialized === 'true') return;
         container.dataset.initialized = 'true';
 
+        const agentId = data.agent_id;
+        const dynamicVars = data.dynamic_vars;
+
         // Create and insert the widget element
         const widget = document.createElement('elevenlabs-convai');
-        widget.setAttribute('agent-id', '{AGENT_ID}');
-        widget.setAttribute('dynamic-variables', '{dynamic_vars_attr}');
+        widget.setAttribute('agent-id', agentId);
+        widget.setAttribute('dynamic-variables', JSON.stringify(dynamicVars));
         container.appendChild(widget);
 
         // Load the ElevenLabs widget script
@@ -115,12 +117,16 @@ _elevenlabs_widget = st.components.v2.component(
         script.src = 'https://unpkg.com/@elevenlabs/convai-widget-embed';
         script.async = true;
         document.head.appendChild(script);
-    }}
+    }
     """,
     isolate_styles=False,
 )
 
-_elevenlabs_widget(key="elevenlabs_voice", height=200)
+_elevenlabs_widget(
+    data={"agent_id": AGENT_ID, "dynamic_vars": dynamic_vars},
+    key="elevenlabs_voice",
+    height=200,
+)
 
 # --- Manual conversation ID input + end button ---
 st.markdown("---")
