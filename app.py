@@ -67,6 +67,31 @@ st.markdown("""
     [data-testid="stExpander"] {
         border-color: #000000 !important;
     }
+
+    /* Hide the sidebar collapse/expand button on mobile (shows "double_arrow_right" text) */
+    [data-testid="stSidebarCollapsedControl"],
+    [data-testid="collapsedControl"],
+    button[kind="headerNoPadding"],
+    .st-emotion-cache-1egp75f,
+    [data-testid="stHeader"] button {
+        display: none !important;
+    }
+
+    /* Hide sidebar entirely since we use in-page navigation */
+    [data-testid="stSidebar"] {
+        display: none !important;
+    }
+    section[data-testid="stSidebar"] {
+        display: none !important;
+    }
+
+    /* Clean up header area */
+    header[data-testid="stHeader"] {
+        background-color: #000000 !important;
+        height: 0px !important;
+        min-height: 0px !important;
+        padding: 0 !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
