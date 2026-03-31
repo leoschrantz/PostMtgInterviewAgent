@@ -7,7 +7,7 @@ from mock_data import get_meeting, update_meeting_status
 from agent import generate_summary
 from utils import save_interview
 
-VOICE_SERVER_URL = "ws://localhost:8001/ws/voice"
+VOICE_SERVER_PORT = "8001"
 TRANSCRIPT_API_URL = "http://localhost:8001/api/transcript"
 
 # --- Guard: must have an active meeting ---
@@ -269,7 +269,12 @@ _voice_widget = st.components.v2.component(
         const indicator = container.querySelector('#audio-indicator');
         const transcriptEl = container.querySelector('#transcript-display');
 
-        const wsUrl = data.ws_url + '/' + data.session_id;
+        // Build WebSocket URL dynamically from current browser location
+        // so it works on localhost, remote servers, and cloud deployments
+        const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsHost = window.location.hostname;
+        const wsPort = data.voice_port;
+        const wsUrl = wsProtocol + '//' + wsHost + ':' + wsPort + '/ws/voice/' + data.session_id;
         const meetingContext = data.meeting_context;
 
         let ws = null;
@@ -508,7 +513,7 @@ _voice_widget = st.components.v2.component(
 
 _voice_widget(
     data={
-        "ws_url": VOICE_SERVER_URL,
+        "voice_port": VOICE_SERVER_PORT,
         "session_id": voice_session_id,
         "meeting_context": meeting_context,
     },
