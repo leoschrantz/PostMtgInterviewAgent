@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "WebFetch(domain:docs.streamlit.io)",
+      "Bash(where python3:*)",
+      "Bash(where py:*)",
+      "Bash(python3 -c \"import py_compile; [py_compile.compile\\(f, doraise=True\\) for f in [''app.py'', ''agent.py'', ''mock_data.py'', ''utils.py'', ''components/voice_component.py'', ''pages/dashboard.py'', ''pages/interview.py'', ''pages/summary.py'']]\")",
+      "Bash(py --version)",
+      "Read(//c/Users/leosc/AppData/Local/Programs/Python//**)",
+      "Bash(ls /c/Python*)",
+      "Bash(conda --version)",
+      "Bash(py -c \"import py_compile; [py_compile.compile\\(f, doraise=True\\) for f in [''app.py'', ''agent.py'', ''mock_data.py'', ''utils.py'', ''components/voice_component.py'', ''pages/dashboard.py'', ''pages/interview.py'', ''pages/summary.py'']]\")",
+      "Bash(py -c \"import streamlit; print\\(''streamlit'', streamlit.__version__\\)\")",
+      "Bash(py -c \"import anthropic; print\\(''anthropic'', anthropic.__version__\\)\")",
+      "Bash(py -m pip install streamlit anthropic)",
+      "Bash(py -m ensurepip --upgrade)",
+      "Bash(py -m streamlit run app.py)",
+      "Bash(py -m streamlit run app.py --server.runOnSave true)",
+      "Read(//c/Users/leosc/OneDrive/Documents/GitHub/PostMtgInterviewAgent/**)",
+      "Bash(gh repo:*)",
+      "Bash(py -m pip install streamlit-mic-recorder deepgram-sdk elevenlabs)",
+      "Bash(rm components/voice_component.py components/voice_component.js components/voice_component.html components/voice_component.css)",
+      "Bash(rmdir components:*)",
+      "Bash(py -c \"import py_compile; [py_compile.compile\\(f, doraise=True\\) for f in [''app.py'', ''agent.py'', ''mock_data.py'', ''utils.py'', ''pages/dashboard.py'', ''pages/interview.py'', ''pages/summary.py'']]\")"
+    ]
+  }
+}

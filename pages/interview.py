@@ -1,9 +1,16 @@
 """Interview page - voice-based post-meeting debrief with Claude."""
 
 import streamlit as st
+from streamlit_mic_recorder import mic_recorder
 from mock_data import get_meeting, update_meeting_status
-from agent import get_interview_response, get_opening_question, generate_summary, is_interview_complete
-from components.voice_component import render_voice_interface
+from agent import (
+    get_interview_response,
+    get_opening_question,
+    generate_summary,
+    is_interview_complete,
+    transcribe_audio,
+    text_to_speech,
+)
 from utils import save_interview
 
 # --- Guard: must have an active meeting ---
@@ -25,14 +32,12 @@ if "interview_started" not in st.session_state:
     st.session_state.interview_started = False
 if "interview_complete" not in st.session_state:
     st.session_state.interview_complete = False
-if "current_tts_text" not in st.session_state:
-    st.session_state.current_tts_text = ""
-if "tts_counter" not in st.session_state:
-    st.session_state.tts_counter = 0
 if "current_summary" not in st.session_state:
     st.session_state.current_summary = None
 if "generating_summary" not in st.session_state:
     st.session_state.generating_summary = False
+if "latest_audio_response" not in st.session_state:
+    st.session_state.latest_audio_response = None
 
 # --- Header (stacked for mobile) ---
 if st.button("< Dashboard", use_container_width=False):
@@ -46,13 +51,15 @@ st.divider()
 if not st.session_state.interview_started:
     with st.spinner("Starting interview..."):
         opening = get_opening_question(meeting)
-        # The opening includes a fake "user" message to prime the conversation
         st.session_state.conversation_history = [
             {"role": "user", "content": "Hi, I just finished the meeting. Ready to debrief."},
             {"role": "assistant", "content": opening},
         ]
-        st.session_state.current_tts_text = opening
-        st.session_state.tts_counter = 1
+        # Generate TTS for the opening question
+        try:
+            st.session_state.latest_audio_response = text_to_speech(opening)
+        except Exception:
+            st.session_state.latest_audio_response = None
         st.session_state.interview_started = True
         st.rerun()
 
@@ -67,6 +74,10 @@ for msg in st.session_state.conversation_history:
             continue
         with st.chat_message("user", avatar="👤"):
             st.write(msg["content"])
+
+# --- Play latest agent audio response ---
+if st.session_state.latest_audio_response:
+    st.audio(st.session_state.latest_audio_response, format="audio/mp3", autoplay=True)
 
 # --- Interview complete: show summary button ---
 if st.session_state.interview_complete:
@@ -102,22 +113,29 @@ if st.session_state.interview_complete:
             st.switch_page("pages/summary.py")
     st.stop()
 
-# --- Voice interface ---
+# --- Voice recording ---
 st.markdown("---")
+st.markdown("**Tap the mic to record your response:**")
 
-voice_result = render_voice_interface(
-    tts_text=st.session_state.current_tts_text,
-    tts_id=str(st.session_state.tts_counter),
-    key="interview_voice",
+audio = mic_recorder(
+    start_prompt="🎤 Start Recording",
+    stop_prompt="⏹️ Stop Recording",
+    just_once=True,
+    use_container_width=True,
+    key="mic_recorder",
 )
 
-# --- Process voice transcript (trigger value) ---
+# --- Process recorded audio ---
 transcript_text = None
-if voice_result and hasattr(voice_result, "transcript") and voice_result.transcript:
-    transcript_text = voice_result.transcript
+if audio and audio["bytes"]:
+    with st.spinner("Transcribing..."):
+        try:
+            transcript_text = transcribe_audio(audio["bytes"])
+        except Exception as e:
+            st.error(f"Transcription failed: {e}")
 
 # --- Text input fallback ---
-text_input = st.chat_input("Type your response here (or use the mic above)...")
+text_input = st.chat_input("Or type your response here...")
 if text_input:
     transcript_text = text_input
 
@@ -139,9 +157,11 @@ if transcript_text:
         {"role": "assistant", "content": response}
     )
 
-    # Set TTS for the new response
-    st.session_state.tts_counter += 1
-    st.session_state.current_tts_text = response
+    # Generate TTS for the response
+    try:
+        st.session_state.latest_audio_response = text_to_speech(response)
+    except Exception:
+        st.session_state.latest_audio_response = None
 
     # Check if interview is complete
     if is_interview_complete(response):

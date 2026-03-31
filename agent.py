@@ -1,11 +1,15 @@
-"""Claude API interview agent logic."""
+"""Claude API interview agent logic + Deepgram STT + ElevenLabs TTS."""
 
 import json
 import streamlit as st
 import anthropic
+from deepgram import DeepgramClient, PrerecordedOptions
+from elevenlabs.client import ElevenLabs
 
 
-client = anthropic.Anthropic(api_key=st.secrets["ANTHROPIC_API_KEY"])
+anthropic_client = anthropic.Anthropic(api_key=st.secrets["ANTHROPIC_API_KEY"])
+deepgram_client = DeepgramClient(st.secrets["DEEPGRAM_API_KEY"])
+elevenlabs_client = ElevenLabs(api_key=st.secrets["ELEVENLABS_API_KEY"])
 
 MODEL = "claude-sonnet-4-20250514"
 
@@ -92,7 +96,7 @@ def get_interview_response(conversation_history: list[dict], meeting: dict) -> s
         The assistant's next message text.
     """
     system_prompt = build_system_prompt(meeting)
-    response = client.messages.create(
+    response = anthropic_client.messages.create(
         model=MODEL,
         max_tokens=300,
         system=system_prompt,
@@ -107,7 +111,7 @@ def get_opening_question(meeting: dict) -> str:
     Makes an API call with a single user message prompting the opening.
     """
     system_prompt = build_system_prompt(meeting)
-    response = client.messages.create(
+    response = anthropic_client.messages.create(
         model=MODEL,
         max_tokens=200,
         system=system_prompt,
@@ -137,7 +141,7 @@ def generate_summary(transcript: list[dict], meeting: dict) -> dict:
         f"Date: {meeting['date']} at {meeting['time']}"
     )
 
-    response = client.messages.create(
+    response = anthropic_client.messages.create(
         model=MODEL,
         max_tokens=1500,
         system=SUMMARY_SYSTEM_PROMPT,
@@ -174,3 +178,23 @@ def format_transcript_for_summary(messages: list[dict]) -> str:
 def is_interview_complete(response: str) -> bool:
     """Check if the agent's response signals the interview is done."""
     return "I have everything I need" in response.lower() or "generate your summary" in response.lower()
+
+
+def transcribe_audio(audio_bytes: bytes) -> str:
+    """Transcribe audio bytes using Deepgram."""
+    response = deepgram_client.listen.rest.v("1").transcribe_file(
+        {"buffer": audio_bytes, "mimetype": "audio/webm"},
+        PrerecordedOptions(model="nova-3", smart_format=True),
+    )
+    return response.results.channels[0].alternatives[0].transcript
+
+
+def text_to_speech(text: str) -> bytes:
+    """Convert text to speech audio using ElevenLabs."""
+    audio_iter = elevenlabs_client.text_to_speech.convert(
+        text=text,
+        voice_id="JBFqnCBsd6RMkjVDRZzb",  # "George" - professional male voice
+        model_id="eleven_flash_v2_5",
+        output_format="mp3_44100_128",
+    )
+    return b"".join(audio_iter)
