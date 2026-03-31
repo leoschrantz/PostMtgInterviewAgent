@@ -2,9 +2,8 @@
 
 import json
 import streamlit as st
-from pathlib import Path
 from mock_data import get_meeting, update_meeting_status
-from agent import generate_summary, fetch_conversation_transcript
+from agent import generate_summary
 from utils import save_interview
 
 AGENT_ID = "agent_7901kn0qbhyzem5ac63stkxkqtst"
@@ -24,10 +23,10 @@ if not meeting:
 # --- Initialize session state ---
 if "current_summary" not in st.session_state:
     st.session_state.current_summary = None
-if "conversation_id" not in st.session_state:
-    st.session_state.conversation_id = None
 if "interview_complete" not in st.session_state:
     st.session_state.interview_complete = False
+if "captured_transcript" not in st.session_state:
+    st.session_state.captured_transcript = None
 
 # --- Header (stacked for mobile) ---
 if st.button("< Dashboard", use_container_width=False):
@@ -47,35 +46,25 @@ meeting_context = (
     f"Pre-meeting notes: {meeting['notes_pre']}"
 )
 
-# Build the dynamic variables dict for the widget
 dynamic_vars = {"meeting_context": meeting_context}
 
-# --- Interview complete: show summary flow ---
-if st.session_state.interview_complete and st.session_state.conversation_id:
+# --- Interview complete: generate summary ---
+if st.session_state.interview_complete and st.session_state.captured_transcript:
     if not st.session_state.current_summary:
-        with st.spinner("Fetching transcript and generating summary..."):
+        with st.spinner("Generating summary from your conversation..."):
             try:
-                transcript = fetch_conversation_transcript(
-                    st.session_state.conversation_id
-                )
-                if transcript:
-                    summary = generate_summary(transcript, meeting)
-                    st.session_state.current_summary = summary
+                transcript = st.session_state.captured_transcript
+                summary = generate_summary(transcript, meeting)
+                st.session_state.current_summary = summary
 
-                    update_meeting_status(
-                        meeting["id"], "complete",
-                        transcript=transcript,
-                        summary=summary,
-                    )
-                    save_interview(meeting["id"], transcript, summary)
-                else:
-                    st.warning("Could not retrieve transcript yet. The conversation may still be processing. Try again in a moment.")
-                    if st.button("Retry", use_container_width=True):
-                        st.rerun()
+                update_meeting_status(
+                    meeting["id"], "complete",
+                    transcript=transcript,
+                    summary=summary,
+                )
+                save_interview(meeting["id"], transcript, summary)
             except Exception as e:
-                st.error(f"Error fetching transcript: {e}")
-                if st.button("Retry", use_container_width=True):
-                    st.rerun()
+                st.error(f"Error generating summary: {e}")
 
     if st.session_state.current_summary:
         st.success("Interview complete! Summary generated.")
@@ -87,18 +76,21 @@ if st.session_state.interview_complete and st.session_state.conversation_id:
 st.markdown("**Tap the call button below to start your debrief conversation:**")
 st.caption("The AI interviewer will ask you questions about your meeting. Just talk naturally -- no buttons needed between turns.")
 
-# Use a v2 component with isolate_styles=False to render directly in the DOM
-# (no iframe = mic/speaker permissions work, script tags execute)
-# Pass dynamic vars via data parameter (properly JSON-serialized by Streamlit)
+# v2 component: renders in DOM (not iframe), captures transcript via JS events
+_noop = lambda: None
+
 _elevenlabs_widget = st.components.v2.component(
     "elevenlabs_widget",
     html="""
     <div id="elevenlabs-container"></div>
+    <div id="transcript-status" style="margin-top:8px; font-size:0.85em; color:#888; text-align:center;"></div>
     """,
     js="""
-    export default function({ parentElement, data }) {
+    export default function({ parentElement, data, setTriggerValue, setStateValue }) {
         const container = parentElement.querySelector('#elevenlabs-container');
+        const status = parentElement.querySelector('#transcript-status');
         if (!container) return;
+
         // Only initialize once
         if (container.dataset.initialized === 'true') return;
         container.dataset.initialized = 'true';
@@ -106,11 +98,57 @@ _elevenlabs_widget = st.components.v2.component(
         const agentId = data.agent_id;
         const dynamicVars = data.dynamic_vars;
 
-        // Create and insert the widget element
+        // Transcript collection
+        window.__elevenLabsTranscript = window.__elevenLabsTranscript || [];
+        window.__elevenLabsCallActive = false;
+
+        // Create widget
         const widget = document.createElement('elevenlabs-convai');
         widget.setAttribute('agent-id', agentId);
         widget.setAttribute('dynamic-variables', JSON.stringify(dynamicVars));
         container.appendChild(widget);
+
+        // Listen for conversation events
+        widget.addEventListener('elevenlabs-convai:call', (event) => {
+            window.__elevenLabsTranscript = [];
+            window.__elevenLabsCallActive = true;
+            status.textContent = 'Conversation active - transcript is being captured...';
+            setStateValue('call_active', true);
+
+            // Set up message handler via the event config
+            if (event.detail && event.detail.config) {
+                event.detail.config.clientTools = event.detail.config.clientTools || {};
+            }
+        });
+
+        widget.addEventListener('elevenlabs-convai:message', (event) => {
+            if (event.detail) {
+                const role = event.detail.source === 'ai' ? 'assistant' : 'user';
+                const content = event.detail.message || '';
+                if (content.trim()) {
+                    window.__elevenLabsTranscript.push({ role: role, content: content });
+                    const count = window.__elevenLabsTranscript.length;
+                    status.textContent = 'Capturing transcript... (' + count + ' messages)';
+                }
+            }
+        });
+
+        widget.addEventListener('elevenlabs-convai:call:ended', (event) => {
+            window.__elevenLabsCallActive = false;
+            const transcript = window.__elevenLabsTranscript;
+            if (transcript && transcript.length > 0) {
+                status.textContent = 'Conversation ended. ' + transcript.length + ' messages captured. Click End Interview below.';
+                setTriggerValue('transcript', JSON.stringify(transcript));
+            } else {
+                status.textContent = 'Conversation ended. No messages captured.';
+            }
+            setStateValue('call_active', false);
+        });
+
+        // Also expose a way to manually grab the transcript
+        window.__getElevenLabsTranscript = function() {
+            return JSON.stringify(window.__elevenLabsTranscript || []);
+        };
 
         // Load the ElevenLabs widget script
         const script = document.createElement('script');
@@ -122,27 +160,29 @@ _elevenlabs_widget = st.components.v2.component(
     isolate_styles=False,
 )
 
-_elevenlabs_widget(
+result = _elevenlabs_widget(
     data={"agent_id": AGENT_ID, "dynamic_vars": dynamic_vars},
     key="elevenlabs_voice",
     height=200,
+    on_call_active_change=_noop,
+    on_transcript_change=_noop,
 )
 
-# --- Manual conversation ID input + end button ---
+# --- Check if transcript was captured via widget events ---
+if result and hasattr(result, "transcript") and result.transcript:
+    try:
+        transcript_data = json.loads(result.transcript)
+        if transcript_data:
+            st.session_state.captured_transcript = transcript_data
+    except (json.JSONDecodeError, TypeError):
+        pass
+
+# --- End Interview button ---
 st.markdown("---")
-st.markdown("When you're done with the conversation, paste the conversation ID below and click End Interview.")
-st.caption("You can find the conversation ID in the ElevenLabs dashboard under Conversations, or just click End Interview to enter it.")
-
-conv_id_input = st.text_input(
-    "Conversation ID (from ElevenLabs)",
-    value=st.session_state.get("conversation_id", ""),
-    placeholder="e.g. abc123def456...",
-)
 
 if st.button("End Interview & Generate Summary", type="primary", use_container_width=True):
-    if conv_id_input:
-        st.session_state.conversation_id = conv_id_input
+    if st.session_state.captured_transcript:
         st.session_state.interview_complete = True
         st.rerun()
     else:
-        st.warning("Please enter the conversation ID from ElevenLabs to generate the summary.")
+        st.warning("No conversation captured yet. Have your conversation first, then end the call in the widget before clicking this button.")

@@ -1,7 +1,6 @@
-"""Claude API summarization + ElevenLabs conversation transcript retrieval."""
+"""Claude API summarization logic."""
 
 import json
-import requests
 import streamlit as st
 import anthropic
 
@@ -30,37 +29,6 @@ Output ONLY valid JSON with this exact structure (no markdown, no code fences):
     "follow_up_date": "suggested next follow-up date",
     "additional_notes": "anything else noteworthy from the conversation"
 }"""
-
-
-def fetch_conversation_transcript(conversation_id: str) -> list[dict] | None:
-    """Fetch the transcript from an ElevenLabs conversation.
-
-    Returns a list of {"role": "user"|"assistant", "content": "..."} dicts,
-    or None if the transcript isn't available yet.
-    """
-    resp = requests.get(
-        f"https://api.elevenlabs.io/v1/convai/conversations/{conversation_id}",
-        headers={"xi-api-key": st.secrets["ELEVENLABS_API_KEY"]},
-        timeout=30,
-    )
-    resp.raise_for_status()
-    data = resp.json()
-
-    # Extract transcript from the conversation data
-    transcript_entries = data.get("transcript", [])
-    if not transcript_entries:
-        return None
-
-    messages = []
-    for entry in transcript_entries:
-        role_raw = entry.get("role", "")
-        content = entry.get("message", "")
-        if not content:
-            continue
-        role = "assistant" if role_raw == "agent" else "user"
-        messages.append({"role": role, "content": content})
-
-    return messages if messages else None
 
 
 def generate_summary(transcript: list[dict], meeting: dict) -> dict:
