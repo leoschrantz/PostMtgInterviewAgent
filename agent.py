@@ -1,15 +1,12 @@
 """Claude API interview agent logic + Deepgram STT + ElevenLabs TTS."""
 
 import json
+import requests
 import streamlit as st
 import anthropic
-from deepgram import DeepgramClient, PrerecordedOptions
-from elevenlabs.client import ElevenLabs
 
 
 anthropic_client = anthropic.Anthropic(api_key=st.secrets["ANTHROPIC_API_KEY"])
-deepgram_client = DeepgramClient(st.secrets["DEEPGRAM_API_KEY"])
-elevenlabs_client = ElevenLabs(api_key=st.secrets["ELEVENLABS_API_KEY"])
 
 MODEL = "claude-sonnet-4-20250514"
 
@@ -181,20 +178,35 @@ def is_interview_complete(response: str) -> bool:
 
 
 def transcribe_audio(audio_bytes: bytes) -> str:
-    """Transcribe audio bytes using Deepgram."""
-    response = deepgram_client.listen.rest.v("1").transcribe_file(
-        {"buffer": audio_bytes, "mimetype": "audio/webm"},
-        PrerecordedOptions(model="nova-3", smart_format=True),
+    """Transcribe audio bytes using Deepgram REST API."""
+    resp = requests.post(
+        "https://api.deepgram.com/v1/listen",
+        headers={
+            "Authorization": f"Token {st.secrets['DEEPGRAM_API_KEY']}",
+            "Content-Type": "audio/webm",
+        },
+        params={"model": "nova-3", "smart_format": "true"},
+        data=audio_bytes,
+        timeout=30,
     )
-    return response.results.channels[0].alternatives[0].transcript
+    resp.raise_for_status()
+    return resp.json()["results"]["channels"][0]["alternatives"][0]["transcript"]
 
 
 def text_to_speech(text: str) -> bytes:
-    """Convert text to speech audio using ElevenLabs."""
-    audio_iter = elevenlabs_client.text_to_speech.convert(
-        text=text,
-        voice_id="JBFqnCBsd6RMkjVDRZzb",  # "George" - professional male voice
-        model_id="eleven_flash_v2_5",
-        output_format="mp3_44100_128",
+    """Convert text to speech audio using ElevenLabs REST API."""
+    resp = requests.post(
+        "https://api.elevenlabs.io/v1/text-to-speech/JBFqnCBsd6RMkjVDRZzb",
+        headers={
+            "xi-api-key": st.secrets["ELEVENLABS_API_KEY"],
+            "Content-Type": "application/json",
+        },
+        json={
+            "text": text,
+            "model_id": "eleven_flash_v2_5",
+            "output_format": "mp3_44100_128",
+        },
+        timeout=30,
     )
-    return b"".join(audio_iter)
+    resp.raise_for_status()
+    return resp.content
