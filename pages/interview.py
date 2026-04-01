@@ -615,6 +615,10 @@ _voice_widget = st.components.v2.component(
     isolate_styles=False,
 )
 
+def _on_transcript_change():
+    """Called when the voice widget sends transcript data back."""
+    pass
+
 widget_result = _voice_widget(
     data={
         "token": ephemeral_token,
@@ -624,6 +628,7 @@ widget_result = _voice_widget(
     default={"transcript": ""},
     key="gemini_voice",
     height=400,
+    on_transcript_change=_on_transcript_change,
 )
 
 # --- End interview ---
