@@ -361,6 +361,16 @@ _voice_widget = st.components.v2.component(
         }
 
         let audioChunkCount = 0;
+        let activeSources = [];  // Track scheduled audio sources for cancellation
+
+        function stopAllPlayback() {
+            for (const src of activeSources) {
+                try { src.stop(); } catch (e) { /* already stopped */ }
+            }
+            activeSources = [];
+            nextPlayTime = 0;
+        }
+
         function playAudioChunk(b64Data) {
             if (!playbackContext) { console.warn('[Voice] No playbackContext'); return; }
             if (playbackContext.state === 'suspended') {
@@ -399,6 +409,12 @@ _voice_widget = st.components.v2.component(
             source.buffer = buffer;
             source.connect(playbackContext.destination);
 
+            // Clean up reference when source finishes naturally
+            source.onended = () => {
+                const idx = activeSources.indexOf(source);
+                if (idx !== -1) activeSources.splice(idx, 1);
+            };
+
             // Schedule for gapless playback
             const now = playbackContext.currentTime;
             if (nextPlayTime < now) {
@@ -406,6 +422,7 @@ _voice_widget = st.components.v2.component(
             }
             source.start(nextPlayTime);
             nextPlayTime += buffer.duration;
+            activeSources.push(source);
         }
 
         async function startConversation() {
@@ -532,7 +549,8 @@ _voice_widget = st.components.v2.component(
 
                     // Input transcription (user speech) — show live as it streams
                     if (sc.inputTranscription && sc.inputTranscription.text) {
-                        // User is speaking — flush any pending agent text as a completed turn
+                        // User is speaking — stop agent audio and flush agent text
+                        if (activeSources.length > 0) { stopAllPlayback(); }
                         flushAgentText();
                         currentUserText += sc.inputTranscription.text;
                         updateLiveText('user', currentUserText.trim());
@@ -557,10 +575,10 @@ _voice_widget = st.components.v2.component(
                         setStatus('Your turn \u2014 speak when ready');
                     }
 
-                    // Interrupted (barge-in)
+                    // Interrupted (barge-in) — stop all queued audio immediately
                     if (sc.interrupted) {
+                        stopAllPlayback();
                         flushAgentText();
-                        nextPlayTime = 0;  // reset playback schedule
                         setStatus('Listening...');
                     }
                 };
