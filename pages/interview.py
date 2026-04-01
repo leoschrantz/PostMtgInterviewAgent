@@ -11,7 +11,7 @@ from agent import generate_summary
 from utils import save_interview
 
 
-GEMINI_LIVE_MODEL = "gemini-2.0-flash-live-001"
+GEMINI_LIVE_MODEL = "gemini-3.1-flash-live-preview"
 
 INTERVIEWER_SYSTEM_PROMPT = """You are a friendly, professional post-meeting debrief interviewer for a sales team. Your job is to conduct a brief voice conversation to capture what happened in a client meeting.
 
@@ -376,17 +376,15 @@ _voice_widget = st.components.v2.component(
 
                 ws.onopen = () => {
                     clearTimeout(connectTimeout);
-                    // Send setup config as first message
+                    // Send setup config as first message (format per Google docs)
                     const setupMsg = {
-                        setup: {
+                        config: {
                             model: 'models/' + model,
-                            generationConfig: {
-                                responseModalities: ['AUDIO'],
-                                speechConfig: {
-                                    voiceConfig: {
-                                        prebuiltVoiceConfig: {
-                                            voiceName: 'Kore'
-                                        }
+                            responseModalities: ['AUDIO'],
+                            speechConfig: {
+                                voiceConfig: {
+                                    prebuiltVoiceConfig: {
+                                        voiceName: 'Kore'
                                     }
                                 }
                             },
