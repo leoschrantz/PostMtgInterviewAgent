@@ -15,8 +15,8 @@ A voice-powered AI debrief tool for sales teams. After completing a client meeti
 | Layer | Technology |
 |-------|-----------|
 | App Framework | Python + Streamlit |
-| Voice Conversation | Google Gemini Live API (bidirectional audio streaming) |
-| LLM (voice agent) | Gemini Flash (native audio, via Live API) |
+| Voice Conversation | Google Gemini Live API (direct browser-to-Gemini WebSocket) |
+| LLM (voice agent) | Gemini 3.1 Flash Live Preview (native audio, via Live API) |
 | LLM (summarization) | Claude Sonnet (via Anthropic API) |
 | CRM | Microsoft Dynamics (mocked) |
 | Hosting | Streamlit Community Cloud |
@@ -27,10 +27,10 @@ A voice-powered AI debrief tool for sales teams. After completing a client meeti
 app.py                  # Entry point, page routing, global styling
 agent.py                # Claude API summarization
 mock_data.py            # Mock Dynamics CRM meetings data
-utils.py                # Transcript formatting, JSON persistence
+utils.py                # Transcript formatting, data persistence
 pages/
     dashboard.py        # Meeting list with status tracking
-    interview.py        # Gemini voice widget + summary generation
+    interview.py        # Gemini Live API voice widget + summary generation
     summary.py          # Structured summary display + mock CRM sync
 .streamlit/
     config.toml         # Streamlit theme configuration
@@ -85,29 +85,36 @@ streamlit run app.py
 Browser (phone/desktop)                          Google
 ┌──────────────────────┐                        ┌─────────┐
 │ Mic capture          │───── WSS (direct) ────▶│ Gemini  │
-│ (Web Audio API)      │                        │ Live API│
-│                      │◀──── Audio + text ─────│         │
-│ Speaker playback     │                        └─────────┘
-│ Transcript capture   │
+│ (Web Audio API +     │                        │ Live API│
+│  AudioWorklet)       │◀──── Audio + text ─────│         │
+│ Speaker playback     │    (bidirectional)      └─────────┘
+│ Live transcription   │
 └──────────────────────┘
        │ transcript
        ▼
 Streamlit Cloud ──── Claude API (summarization)
 ```
 
-The browser connects **directly** to Gemini's WebSocket endpoint using
-an ephemeral token (generated server-side). No intermediary voice server
+The browser connects **directly** to Gemini's WebSocket endpoint via
+the Gemini Live API (`BidiGenerateContent`). No intermediary voice server
 needed — works on Streamlit Community Cloud out of the box.
+
+Audio is captured at 16kHz via AudioWorklet, sent as base64 PCM over
+WebSocket, and Gemini responds with 24kHz audio for playback. Both input
+and output transcriptions stream in real-time.
 
 ## Notes
 
 - **Mobile**: Optimized for mobile use (salespeople typically debrief from their phones)
 - **Browser support**: Voice works on Chrome, Edge, Safari (desktop and mobile) via Web Audio API + WebSocket
+- **Barge-in**: Users can interrupt the AI interviewer mid-sentence; audio stops immediately
 - **Fallback**: If voice/transcript retrieval fails, a manual text recap option is available
+- **Security**: API key is passed to the browser for direct WebSocket connection. For production, consider using ephemeral tokens
 - **Prototype scope**: Dynamics CRM integration is mocked. In production, this would connect via the Dynamics 365 Web API
 
 ## Future Enhancements
 
+- Ephemeral tokens for secure browser-to-Gemini authentication
 - Real Microsoft Dynamics 365 API integration
 - Automatic meeting detection (no manual selection needed)
 - Multi-language support
