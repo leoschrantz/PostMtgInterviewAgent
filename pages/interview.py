@@ -1,14 +1,38 @@
-"""Interview page - Gemini Live API voice agent for post-meeting debrief."""
+"""Interview page - Gemini Live API voice agent for post-meeting debrief.
+
+Architecture: Browser connects directly to Gemini's WebSocket endpoint.
+No intermediary server needed — works on Streamlit Cloud.
+"""
 
 import json
 import streamlit as st
-import requests
+from google import genai
+from google.genai import types
+import datetime
 from mock_data import get_meeting, update_meeting_status
 from agent import generate_summary
 from utils import save_interview
 
-VOICE_SERVER_PORT = "8001"
-TRANSCRIPT_API_URL = "http://localhost:8001/api/transcript"
+
+GEMINI_LIVE_MODEL = "gemini-2.0-flash-live-001"
+
+INTERVIEWER_SYSTEM_PROMPT = """You are a friendly, professional post-meeting debrief interviewer for a sales team. Your job is to conduct a brief voice conversation to capture what happened in a client meeting.
+
+Your approach:
+1. Start by greeting the salesperson warmly and asking how the meeting went overall
+2. Ask focused follow-up questions based on the pre-meeting objectives provided in the meeting context
+3. Probe for specifics: client reactions, objections, next steps, any surprises
+4. Ask about deal status changes, timeline, and action items
+5. Keep the conversation natural and conversational - this is a quick debrief, not an interrogation
+6. After 5-8 exchanges, wrap up by summarizing what you heard and confirming accuracy
+
+Important guidelines:
+- Be concise in your questions - one question at a time
+- Listen actively and reference what the salesperson just said
+- If they mention something important, dig deeper
+- Pay special attention to whether the pre-meeting KEY OBJECTIVES were addressed
+- Keep a warm, supportive tone - you're helping them capture value, not evaluating them
+- Start immediately with a warm greeting and ask how the meeting went"""
 
 # --- Guard: must have an active meeting ---
 if "active_meeting_id" not in st.session_state or not st.session_state.active_meeting_id:
@@ -27,13 +51,8 @@ if "current_summary" not in st.session_state:
     st.session_state.current_summary = None
 if "interview_complete" not in st.session_state:
     st.session_state.interview_complete = False
-if "fetching_transcript" not in st.session_state:
-    st.session_state.fetching_transcript = False
 if "show_recap_form" not in st.session_state:
     st.session_state.show_recap_form = False
-if "voice_session_id" not in st.session_state:
-    import uuid
-    st.session_state.voice_session_id = str(uuid.uuid4())
 
 # --- Header (stacked for mobile) ---
 if st.button("< Dashboard", use_container_width=False):
@@ -53,6 +72,27 @@ meeting_context = (
     f"Pre-meeting notes: {meeting['notes_pre']}"
 )
 
+system_instruction = f"{INTERVIEWER_SYSTEM_PROMPT}\n\nMeeting Context:\n{meeting_context}"
+
+# --- Generate ephemeral token for browser-to-Gemini connection ---
+@st.cache_data(ttl=50)  # Cache for 50 seconds (token valid for 60s new sessions)
+def _get_ephemeral_token():
+    """Generate a short-lived token so the API key stays server-side."""
+    client = genai.Client(
+        api_key=st.secrets["GOOGLE_API_KEY"],
+        http_options={"api_version": "v1alpha"},
+    )
+    now = datetime.datetime.now(tz=datetime.timezone.utc)
+    token = client.auth_tokens.create(
+        config={
+            "uses": 1,
+            "expire_time": now + datetime.timedelta(minutes=30),
+            "new_session_expire_time": now + datetime.timedelta(minutes=2),
+            "http_options": {"api_version": "v1alpha"},
+        }
+    )
+    return token.name
+
 # --- Summary complete ---
 if st.session_state.interview_complete and st.session_state.current_summary:
     st.success("Interview complete! Summary generated.")
@@ -60,58 +100,25 @@ if st.session_state.interview_complete and st.session_state.current_summary:
         st.switch_page("pages/summary.py")
     st.stop()
 
-# --- Transcript fetch + summary generation ---
-if st.session_state.fetching_transcript:
-    with st.spinner("Fetching conversation transcript..."):
+# --- Summary generation from transcript ---
+if "pending_transcript" in st.session_state and st.session_state.pending_transcript:
+    transcript = st.session_state.pending_transcript
+    st.session_state.pending_transcript = None
+    with st.spinner(f"Transcript captured ({len(transcript)} messages). Claude is generating your summary..."):
         try:
-            session_id = st.session_state.voice_session_id
-            resp = requests.get(f"{TRANSCRIPT_API_URL}/{session_id}", timeout=10)
-            resp.raise_for_status()
-            data = resp.json()
-            transcript = data.get("transcript", [])
-
-            if transcript:
-                st.success(f"Transcript retrieved! ({len(transcript)} messages)")
-                with st.spinner("Claude is generating your structured summary..."):
-                    summary = generate_summary(transcript, meeting)
-                    st.session_state.current_summary = summary
-                    st.session_state.interview_complete = True
-
-                    update_meeting_status(
-                        meeting["id"], "complete",
-                        transcript=transcript,
-                        summary=summary,
-                    )
-                    save_interview(meeting["id"], transcript, summary)
-
-                    # Clean up transcript from voice server
-                    try:
-                        requests.delete(f"{TRANSCRIPT_API_URL}/{session_id}", timeout=5)
-                    except Exception:
-                        pass
-
-                    # Generate new session ID for next interview
-                    import uuid
-                    st.session_state.voice_session_id = str(uuid.uuid4())
-                    st.rerun()
-            else:
-                st.warning("Transcript is empty. Make sure you've completed a conversation first.")
-                st.session_state.fetching_transcript = False
+            summary = generate_summary(transcript, meeting)
+            st.session_state.current_summary = summary
+            st.session_state.interview_complete = True
+            update_meeting_status(
+                meeting["id"], "complete",
+                transcript=transcript,
+                summary=summary,
+            )
+            save_interview(meeting["id"], transcript, summary)
+            st.rerun()
         except Exception as e:
-            st.error(f"Error fetching transcript: {e}")
-            st.session_state.fetching_transcript = False
-
-    if not st.session_state.interview_complete:
-        if st.button("Try Again", use_container_width=True):
-            st.session_state.fetching_transcript = True
-            st.rerun()
-        st.markdown("---")
-        st.caption("If the transcript keeps failing, you can write a quick recap instead:")
-        if st.button("Write recap manually instead", use_container_width=True):
-            st.session_state.fetching_transcript = False
+            st.error(f"Error generating summary: {e}")
             st.session_state.show_recap_form = True
-            st.rerun()
-    st.stop()
 
 # --- Manual recap fallback ---
 if st.session_state.show_recap_form:
@@ -154,11 +161,18 @@ if st.session_state.show_recap_form:
             st.warning("Please enter some notes first.")
     st.stop()
 
+# --- Get ephemeral token ---
+try:
+    ephemeral_token = _get_ephemeral_token()
+except Exception as e:
+    st.error(f"Failed to connect to Google AI: {e}")
+    st.caption("Check that GOOGLE_API_KEY is set correctly in Streamlit secrets.")
+    st.session_state.show_recap_form = True
+    st.stop()
+
 # --- Gemini Voice Agent Widget ---
 st.markdown("### Step 1: Have your debrief conversation")
 st.caption("Tap the microphone button to start. The AI interviewer will ask you about your meeting.")
-
-voice_session_id = st.session_state.voice_session_id
 
 _voice_widget = st.components.v2.component(
     "gemini_voice_widget",
@@ -257,7 +271,8 @@ _voice_widget = st.components.v2.component(
     </style>
     """,
     js="""
-    export default function({ parentElement, data }) {
+    export default function(component) {
+        const { setStateValue, parentElement, data } = component;
         const container = parentElement.querySelector('#voice-container');
         if (!container || container.dataset.initialized === 'true') return;
         container.dataset.initialized = 'true';
@@ -269,19 +284,25 @@ _voice_widget = st.components.v2.component(
         const indicator = container.querySelector('#audio-indicator');
         const transcriptEl = container.querySelector('#transcript-display');
 
-        // Build WebSocket URL dynamically from current browser location
-        // so it works on localhost, remote servers, and cloud deployments
-        const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const wsHost = window.location.hostname;
-        const wsPort = data.voice_port;
-        const wsUrl = wsProtocol + '//' + wsHost + ':' + wsPort + '/ws/voice/' + data.session_id;
-        const meetingContext = data.meeting_context;
+        const token = data.token;
+        const model = data.model;
+        const systemInstruction = data.system_instruction;
+
+        // Gemini Live API WebSocket URL (using ephemeral token)
+        const wsUrl = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?access_token=' + token;
 
         let ws = null;
         let audioContext = null;
+        let playbackContext = null;
         let mediaStream = null;
         let workletNode = null;
         let isActive = false;
+        let configSent = false;
+
+        // Transcript accumulation
+        let transcript = [];
+        let currentUserText = '';
+        let currentAgentText = '';
 
         // Audio playback queue
         let playbackQueue = [];
@@ -291,32 +312,34 @@ _voice_widget = st.components.v2.component(
             statusEl.textContent = text;
         }
 
-        function addTranscript(role, text, finished) {
-            // Find or create the current partial element
-            let partialId = 'partial-' + role;
-            let el = container.querySelector('#' + partialId);
-            if (!el) {
-                el = document.createElement('div');
-                el.id = partialId;
-                el.className = role === 'user' ? 'user-msg' : 'agent-msg';
-                let label = role === 'user' ? 'You' : 'Interviewer';
-                el.innerHTML = '<span class="label">' + label + ':</span> ';
-                transcriptEl.appendChild(el);
-            }
-            // Append text
-            el.innerHTML += text;
-
-            if (finished) {
-                el.removeAttribute('id');
-            }
+        function addTranscriptDisplay(role, text) {
+            const el = document.createElement('div');
+            el.className = role === 'user' ? 'user-msg' : 'agent-msg';
+            const label = role === 'user' ? 'You' : 'Interviewer';
+            el.innerHTML = '<span class="label">' + label + ':</span> ' + text;
+            transcriptEl.appendChild(el);
             transcriptEl.scrollTop = transcriptEl.scrollHeight;
+        }
+
+        function flushUserText() {
+            if (currentUserText.trim()) {
+                transcript.push({ role: 'user', content: currentUserText.trim() });
+                addTranscriptDisplay('user', currentUserText.trim());
+                currentUserText = '';
+            }
+        }
+
+        function flushAgentText() {
+            if (currentAgentText.trim()) {
+                transcript.push({ role: 'assistant', content: currentAgentText.trim() });
+                addTranscriptDisplay('assistant', currentAgentText.trim());
+                currentAgentText = '';
+            }
         }
 
         async function playAudioChunk(b64Data) {
             playbackQueue.push(b64Data);
-            if (!isPlaying) {
-                processPlaybackQueue();
-            }
+            if (!isPlaying) processPlaybackQueue();
         }
 
         async function processPlaybackQueue() {
@@ -325,7 +348,6 @@ _voice_widget = st.components.v2.component(
                 return;
             }
             isPlaying = true;
-
             const b64 = playbackQueue.shift();
             const raw = atob(b64);
             const bytes = new Uint8Array(raw.length);
@@ -338,90 +360,135 @@ _voice_widget = st.components.v2.component(
                 float32[i] = pcm16[i] / 32768.0;
             }
 
-            // Play via AudioContext
-            if (!audioContext) return;
-            const buffer = audioContext.createBuffer(1, float32.length, 24000);
+            if (!playbackContext) {
+                playbackContext = new AudioContext({ sampleRate: 24000 });
+            }
+            const buffer = playbackContext.createBuffer(1, float32.length, 24000);
             buffer.getChannelData(0).set(float32);
-            const source = audioContext.createBufferSource();
+            const source = playbackContext.createBufferSource();
             source.buffer = buffer;
-            source.connect(audioContext.destination);
+            source.connect(playbackContext.destination);
             source.onended = () => processPlaybackQueue();
             source.start();
         }
 
         async function startConversation() {
             try {
-                setStatus('Connecting...');
-
-                // Init audio context
-                audioContext = new AudioContext({ sampleRate: 16000 });
+                setStatus('Requesting microphone...');
+                configSent = false;
 
                 // Get microphone
                 mediaStream = await navigator.mediaDevices.getUserMedia({
                     audio: { sampleRate: 16000, channelCount: 1, echoCancellation: true, noiseSuppression: true }
                 });
 
-                // Connect WebSocket
+                setStatus('Connecting to Gemini...');
+
+                // Connect directly to Gemini Live API
                 ws = new WebSocket(wsUrl);
 
-                // Timeout if we don't get 'ready' within 15 seconds
                 let connectTimeout = setTimeout(() => {
-                    if (isActive) {
-                        setStatus('Connection timed out. Check voice server logs.');
+                    if (isActive && !configSent) {
+                        setStatus('Connection timed out. Try again.');
                         stopConversation();
                     }
                 }, 15000);
 
                 ws.onopen = () => {
-                    setStatus('Connected to server, starting voice agent...');
-                    // Send config as first message
-                    ws.send(JSON.stringify({
-                        type: 'config',
-                        meeting_context: meetingContext,
-                    }));
+                    clearTimeout(connectTimeout);
+                    // Send setup config as first message
+                    const setupMsg = {
+                        setup: {
+                            model: 'models/' + model,
+                            generationConfig: {
+                                responseModalities: ['AUDIO'],
+                                speechConfig: {
+                                    voiceConfig: {
+                                        prebuiltVoiceConfig: {
+                                            voiceName: 'Kore'
+                                        }
+                                    }
+                                }
+                            },
+                            systemInstruction: {
+                                parts: [{ text: systemInstruction }]
+                            },
+                            inputAudioTranscription: {},
+                            outputAudioTranscription: {}
+                        }
+                    };
+                    ws.send(JSON.stringify(setupMsg));
+                    configSent = true;
+                    setStatus('Connected! Interviewer is starting...');
+                    startMicCapture();
                 };
 
                 ws.onmessage = (event) => {
                     const msg = JSON.parse(event.data);
 
-                    if (msg.type === 'ready') {
-                        clearTimeout(connectTimeout);
+                    // Setup complete acknowledgment
+                    if (msg.setupComplete) {
                         setStatus('Interviewer is speaking...');
-                        startMicCapture();
-                    } else if (msg.type === 'audio') {
-                        playAudioChunk(msg.data);
-                        indicator.style.width = '80%';
-                        setTimeout(() => { indicator.style.width = '0%'; }, 200);
-                    } else if (msg.type === 'transcript') {
-                        addTranscript(msg.role, msg.text, msg.finished);
-                        if (msg.role === 'user') {
-                            setStatus('Listening...');
-                        } else {
-                            setStatus('Interviewer is speaking...');
+                    }
+
+                    const sc = msg.serverContent;
+                    if (!sc) return;
+
+                    // Audio from model
+                    if (sc.modelTurn && sc.modelTurn.parts) {
+                        for (const part of sc.modelTurn.parts) {
+                            if (part.inlineData && part.inlineData.data) {
+                                playAudioChunk(part.inlineData.data);
+                                indicator.style.width = '80%';
+                                setTimeout(() => { indicator.style.width = '0%'; }, 200);
+                            }
                         }
-                    } else if (msg.type === 'turn_complete') {
+                        setStatus('Interviewer is speaking...');
+                    }
+
+                    // Input transcription (user speech)
+                    if (sc.inputTranscription && sc.inputTranscription.text) {
+                        currentUserText += sc.inputTranscription.text;
+                        if (sc.inputTranscription.finished) {
+                            flushUserText();
+                        }
+                    }
+
+                    // Output transcription (agent speech)
+                    if (sc.outputTranscription && sc.outputTranscription.text) {
+                        currentAgentText += sc.outputTranscription.text;
+                        if (sc.outputTranscription.finished) {
+                            flushAgentText();
+                        }
+                    }
+
+                    // Turn complete
+                    if (sc.turnComplete) {
+                        flushAgentText();
                         indicator.style.width = '0%';
-                        setStatus('Your turn — speak when ready');
-                    } else if (msg.type === 'interrupted') {
-                        // Clear playback queue on barge-in
+                        setStatus('Your turn \u2014 speak when ready');
+                    }
+
+                    // Interrupted (barge-in)
+                    if (sc.interrupted) {
+                        flushAgentText();
                         playbackQueue = [];
+                        isPlaying = false;
                         setStatus('Listening...');
-                    } else if (msg.type === 'error') {
-                        clearTimeout(connectTimeout);
-                        setStatus('Error: ' + msg.message);
-                        stopConversation();
                     }
                 };
 
-                ws.onerror = () => {
+                ws.onerror = (err) => {
                     clearTimeout(connectTimeout);
-                    setStatus('Connection error. Is the voice server running on port ' + wsPort + '?');
+                    console.error('WebSocket error:', err);
+                    setStatus('Connection error. Check console for details.');
                 };
 
                 ws.onclose = (event) => {
                     clearTimeout(connectTimeout);
                     if (isActive) {
-                        setStatus('Connection closed' + (event.reason ? ': ' + event.reason : '. Check server logs.'));
+                        const reason = event.reason || (event.code === 1000 ? '' : 'code ' + event.code);
+                        setStatus('Connection closed' + (reason ? ': ' + reason : '') + '. Tap mic to reconnect.');
                         stopConversation();
                     }
                 };
@@ -438,9 +505,11 @@ _voice_widget = st.components.v2.component(
         }
 
         async function startMicCapture() {
-            if (!audioContext || !mediaStream || !ws) return;
+            if (!mediaStream) return;
 
-            // Load AudioWorklet for mic capture
+            // Create a separate audio context for mic capture at 16kHz
+            audioContext = new AudioContext({ sampleRate: 16000 });
+
             const workletCode = `
                 class MicProcessor extends AudioWorkletProcessor {
                     process(inputs) {
@@ -460,31 +529,37 @@ _voice_widget = st.components.v2.component(
                 registerProcessor('mic-processor', MicProcessor);
             `;
             const blob = new Blob([workletCode], { type: 'application/javascript' });
-            const url = URL.createObjectURL(blob);
-            await audioContext.audioWorklet.addModule(url);
-            URL.revokeObjectURL(url);
+            const blobUrl = URL.createObjectURL(blob);
+            await audioContext.audioWorklet.addModule(blobUrl);
+            URL.revokeObjectURL(blobUrl);
 
             const source = audioContext.createMediaStreamSource(mediaStream);
             workletNode = new AudioWorkletNode(audioContext, 'mic-processor');
 
             workletNode.port.onmessage = (event) => {
-                if (ws && ws.readyState === WebSocket.OPEN) {
+                if (ws && ws.readyState === WebSocket.OPEN && configSent) {
                     const pcmBytes = new Uint8Array(event.data);
                     let binary = '';
                     for (let i = 0; i < pcmBytes.length; i++) {
                         binary += String.fromCharCode(pcmBytes[i]);
                     }
                     const b64 = btoa(binary);
-                    ws.send(JSON.stringify({ type: 'audio', data: b64 }));
-
-                    // Visual feedback for mic input
+                    ws.send(JSON.stringify({
+                        realtimeInput: {
+                            audio: {
+                                data: b64,
+                                mimeType: 'audio/pcm;rate=16000'
+                            }
+                        }
+                    }));
                     indicator.style.width = '40%';
                     setTimeout(() => { indicator.style.width = '0%'; }, 100);
                 }
             };
 
             source.connect(workletNode);
-            workletNode.connect(audioContext.destination);
+            // Don't connect to destination - we don't want mic feedback
+            workletNode.connect(audioContext.createMediaStreamDestination());
         }
 
         function stopConversation() {
@@ -494,8 +569,11 @@ _voice_widget = st.components.v2.component(
             stopIcon.style.display = 'none';
             indicator.style.width = '0%';
 
+            // Flush any remaining text
+            flushUserText();
+            flushAgentText();
+
             if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ type: 'end' }));
                 ws.close();
             }
             ws = null;
@@ -504,12 +582,10 @@ _voice_widget = st.components.v2.component(
                 workletNode.disconnect();
                 workletNode = null;
             }
-
             if (mediaStream) {
                 mediaStream.getTracks().forEach(t => t.stop());
                 mediaStream = null;
             }
-
             if (audioContext) {
                 audioContext.close();
                 audioContext = null;
@@ -517,7 +593,14 @@ _voice_widget = st.components.v2.component(
 
             playbackQueue = [];
             isPlaying = false;
-            setStatus('Conversation ended. Click below to generate your summary.');
+
+            // Send transcript back to Streamlit via setStateValue
+            if (transcript.length > 0) {
+                setStateValue('transcript', JSON.stringify(transcript));
+                setStatus('Conversation ended (' + transcript.length + ' messages captured). Click below to generate summary.');
+            } else {
+                setStatus('Conversation ended. No transcript captured. Try the manual recap below.');
+            }
         }
 
         micBtn.addEventListener('click', () => {
@@ -532,12 +615,13 @@ _voice_widget = st.components.v2.component(
     isolate_styles=False,
 )
 
-_voice_widget(
+widget_result = _voice_widget(
     data={
-        "voice_port": VOICE_SERVER_PORT,
-        "session_id": voice_session_id,
-        "meeting_context": meeting_context,
+        "token": ephemeral_token,
+        "model": GEMINI_LIVE_MODEL,
+        "system_instruction": system_instruction,
     },
+    default={"transcript": ""},
     key="gemini_voice",
     height=400,
 )
@@ -548,5 +632,20 @@ st.markdown("### Step 2: End the call, then generate your summary")
 st.caption("Stop the conversation above first, then click the button below.")
 
 if st.button("End Interview & Generate Summary", type="primary", use_container_width=True):
-    st.session_state.fetching_transcript = True
+    # Read transcript from widget state
+    raw = widget_result.transcript if widget_result else ""
+    if raw:
+        try:
+            transcript = json.loads(raw)
+            if transcript:
+                st.session_state.pending_transcript = transcript
+                st.rerun()
+            else:
+                st.warning("Transcript is empty. Make sure you've had a conversation first.")
+        except json.JSONDecodeError:
+            st.error("Failed to parse transcript data.")
+    else:
+        st.warning("No transcript captured yet. Have a conversation first, or use the manual recap below.")
+
+    st.session_state.show_recap_form = True
     st.rerun()

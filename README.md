@@ -18,18 +18,16 @@ A voice-powered AI debrief tool for sales teams. After completing a client meeti
 | Voice Conversation | Google Gemini Live API (bidirectional audio streaming) |
 | LLM (voice agent) | Gemini Flash (native audio, via Live API) |
 | LLM (summarization) | Claude Sonnet (via Anthropic API) |
-| Voice Server | FastAPI + WebSocket |
 | CRM | Microsoft Dynamics (mocked) |
+| Hosting | Streamlit Community Cloud |
 
 ## Project Structure
 
 ```
 app.py                  # Entry point, page routing, global styling
 agent.py                # Claude API summarization
-voice_server.py         # FastAPI WebSocket server for Gemini Live API voice streaming
 mock_data.py            # Mock Dynamics CRM meetings data
 utils.py                # Transcript formatting, JSON persistence
-start.sh                # Startup script (runs both Streamlit + voice server)
 pages/
     dashboard.py        # Meeting list with status tracking
     interview.py        # Gemini voice widget + summary generation
@@ -61,12 +59,8 @@ ANTHROPIC_API_KEY = "sk-ant-..."
 GOOGLE_API_KEY = "your-google-ai-studio-key"
 EOF
 
-# Option 1: Start both servers with the startup script
-./start.sh
-
-# Option 2: Start servers manually
-uvicorn voice_server:app --host 0.0.0.0 --port 8001 &
-streamlit run app.py --server.port 8501
+# Run the app
+streamlit run app.py
 ```
 
 ### Required Secrets
@@ -88,17 +82,22 @@ streamlit run app.py --server.port 8501
 ## Architecture
 
 ```
-Browser                    Voice Server (FastAPI :8001)        Google
-┌─────────────┐           ┌──────────────────────┐           ┌─────────┐
-│ Mic capture  │──PCM16──▶│ WebSocket endpoint   │──WSS────▶│ Gemini  │
-│ (Web Audio)  │          │                      │           │ Live API│
-│              │◀─PCM24───│ Audio + transcripts   │◀─────────│         │
-│ Speaker      │          │ forwarded to browser  │           └─────────┘
-└─────────────┘           └──────────────────────┘
-       │
+Browser (phone/desktop)                          Google
+┌──────────────────────┐                        ┌─────────┐
+│ Mic capture          │───── WSS (direct) ────▶│ Gemini  │
+│ (Web Audio API)      │                        │ Live API│
+│                      │◀──── Audio + text ─────│         │
+│ Speaker playback     │                        └─────────┘
+│ Transcript capture   │
+└──────────────────────┘
+       │ transcript
        ▼
-Streamlit App (:8501) ──── Claude API (summarization)
+Streamlit Cloud ──── Claude API (summarization)
 ```
+
+The browser connects **directly** to Gemini's WebSocket endpoint using
+an ephemeral token (generated server-side). No intermediary voice server
+needed — works on Streamlit Community Cloud out of the box.
 
 ## Notes
 
