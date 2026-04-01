@@ -399,8 +399,7 @@ _voice_widget = st.components.v2.component(
 
                 ws.onopen = () => {
                     clearTimeout(connectTimeout);
-                    // Send setup as first message
-                    // The API reference uses "setup" key with generationConfig
+                    // Send setup as first message (must be sent before anything else)
                     const setupMsg = {
                         setup: {
                             model: 'models/' + model,
@@ -423,8 +422,8 @@ _voice_widget = st.components.v2.component(
                     };
                     ws.send(JSON.stringify(setupMsg));
                     configSent = true;
-                    setStatus('Connected! Interviewer is starting...');
-                    startMicCapture();
+                    setStatus('Connected! Waiting for setup...');
+                    // NOTE: Do NOT start mic capture here — wait for setupComplete
                 };
 
                 let msgCount = 0;
@@ -454,7 +453,11 @@ _voice_widget = st.components.v2.component(
                     // Setup complete acknowledgment
                     if (msg.setupComplete) {
                         setupComplete = true;
+                        console.log('[Voice] Setup complete — starting mic and prompting greeting');
                         setStatus('Interviewer is speaking...');
+
+                        // NOW start mic capture (only after setup is acknowledged)
+                        startMicCapture();
 
                         // Prompt Gemini to speak first with a greeting
                         ws.send(JSON.stringify({
@@ -581,7 +584,7 @@ _voice_widget = st.components.v2.component(
             workletNode = new AudioWorkletNode(audioContext, 'mic-processor');
 
             workletNode.port.onmessage = (event) => {
-                if (ws && ws.readyState === WebSocket.OPEN && configSent) {
+                if (ws && ws.readyState === WebSocket.OPEN && setupComplete) {
                     const pcmBytes = new Uint8Array(event.data);
                     let binary = '';
                     for (let i = 0; i < pcmBytes.length; i++) {
