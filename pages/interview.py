@@ -356,6 +356,12 @@ _voice_widget = st.components.v2.component(
             try {
                 setStatus('Requesting microphone...');
                 configSent = false;
+                setupComplete = false;
+
+                // Create playback AudioContext during user gesture (required by mobile browsers)
+                if (!playbackContext) {
+                    playbackContext = new AudioContext({ sampleRate: 24000 });
+                }
 
                 // Get microphone
                 mediaStream = await navigator.mediaDevices.getUserMedia({
@@ -411,6 +417,17 @@ _voice_widget = st.components.v2.component(
                     if (msg.setupComplete) {
                         setupComplete = true;
                         setStatus('Interviewer is speaking...');
+
+                        // Prompt Gemini to speak first with a greeting
+                        ws.send(JSON.stringify({
+                            clientContent: {
+                                turns: [{
+                                    role: 'user',
+                                    parts: [{ text: 'The salesperson just joined. Greet them warmly and ask how the meeting went. Keep it brief — one or two sentences.' }]
+                                }],
+                                turnComplete: true
+                            }
+                        }));
                     }
 
                     const sc = msg.serverContent;
