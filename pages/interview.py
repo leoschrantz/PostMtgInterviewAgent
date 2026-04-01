@@ -518,6 +518,8 @@ _voice_widget = st.components.v2.component(
 
                     // Audio from model (inline base64 in JSON)
                     if (sc.modelTurn && sc.modelTurn.parts) {
+                        // Agent is speaking — flush any pending user text as a completed turn
+                        flushUserText();
                         for (const part of sc.modelTurn.parts) {
                             if (part.inlineData && part.inlineData.data) {
                                 playAudioChunk(part.inlineData.data);
@@ -530,6 +532,8 @@ _voice_widget = st.components.v2.component(
 
                     // Input transcription (user speech) — show live as it streams
                     if (sc.inputTranscription && sc.inputTranscription.text) {
+                        // User is speaking — flush any pending agent text as a completed turn
+                        flushAgentText();
                         currentUserText += sc.inputTranscription.text;
                         updateLiveText('user', currentUserText.trim());
                         if (sc.inputTranscription.finished) {
