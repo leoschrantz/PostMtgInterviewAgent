@@ -1,5 +1,6 @@
 """Summary page - displays structured interview summary and raw transcript."""
 
+import json
 import streamlit as st
 from mock_data import get_meeting
 from utils import format_transcript
@@ -40,74 +41,110 @@ if "error" in summary:
     st.code(summary.get("raw", "No details available"))
     st.stop()
 
-# --- Meeting Outcome ---
-st.markdown("### Meeting Outcome")
-st.info(summary.get("meeting_outcome", "N/A"))
 
-# --- Key Takeaways ---
-st.markdown("### Key Takeaways")
-for takeaway in summary.get("key_takeaways", []):
-    st.markdown(f"- {takeaway}")
+# --- Helper: convert structured summary to markdown ---
+def summary_to_markdown(s: dict) -> str:
+    """Convert summary dict to a clean markdown string."""
+    lines = []
 
-# --- Client Sentiment ---
-st.markdown("### Client Sentiment")
-sentiment = summary.get("client_sentiment", "N/A")
-if "positive" in sentiment.lower():
-    st.success(sentiment)
-elif "negative" in sentiment.lower():
-    st.error(sentiment)
+    lines.append(f"## Meeting Outcome\n{s.get('meeting_outcome', 'N/A')}")
+
+    takeaways = s.get("key_takeaways", [])
+    if takeaways:
+        lines.append("## Key Takeaways")
+        for t in takeaways:
+            lines.append(f"- {t}")
+
+    lines.append(f"\n## Client Sentiment\n{s.get('client_sentiment', 'N/A')}")
+
+    action_items = s.get("action_items", [])
+    if action_items:
+        lines.append("## Action Items")
+        for item in action_items:
+            owner = item.get("owner", "TBD")
+            action = item.get("action", "")
+            deadline = item.get("deadline", "TBD")
+            lines.append(f"- **{owner}:** {action} *(by {deadline})*")
+
+    deal_status = s.get("deal_status", {})
+    if deal_status:
+        lines.append("## Deal Status Assessment")
+        lines.append(f"- **Recommended Stage:** {deal_status.get('stage_recommendation', 'N/A')}")
+        lines.append(f"- **Confidence:** {deal_status.get('confidence_level', 'N/A')}")
+        lines.append(f"- **Deal Value:** {deal_status.get('deal_value_change', 'no change')}")
+        risks = deal_status.get("risks", [])
+        if risks:
+            lines.append("- **Risks:**")
+            for risk in risks:
+                lines.append(f"  - {risk}")
+
+    follow_up = s.get("follow_up_date")
+    if follow_up:
+        lines.append(f"\n## Suggested Follow-up\n{follow_up}")
+
+    additional = s.get("additional_notes")
+    if additional:
+        lines.append(f"\n## Additional Notes\n{additional}")
+
+    return "\n".join(lines)
+
+
+# --- Initialize edit state ---
+if "editing_summary" not in st.session_state:
+    st.session_state.editing_summary = False
+if "summary_markdown" not in st.session_state or not st.session_state.get("summary_markdown"):
+    st.session_state.summary_markdown = summary_to_markdown(summary)
+
+
+# --- Edit / View toggle ---
+edit_col, spacer = st.columns([1, 3])
+with edit_col:
+    if st.session_state.editing_summary:
+        if st.button("Save", type="primary", use_container_width=True):
+            st.session_state.editing_summary = False
+            st.rerun()
+    else:
+        if st.button("Edit Summary", use_container_width=True):
+            st.session_state.editing_summary = True
+            st.rerun()
+
+
+# --- Display summary ---
+if st.session_state.editing_summary:
+    st.session_state.summary_markdown = st.text_area(
+        "Edit your summary (Markdown supported)",
+        value=st.session_state.summary_markdown,
+        height=500,
+        key="summary_editor",
+    )
 else:
-    st.warning(sentiment)
-
-# --- Action Items ---
-st.markdown("### Action Items")
-action_items = summary.get("action_items", [])
-if action_items:
-    for item in action_items:
-        owner = item.get("owner", "TBD")
-        action = item.get("action", "")
-        deadline = item.get("deadline", "TBD")
-        st.markdown(f"- **{owner}:** {action} *(by {deadline})*")
-else:
-    st.markdown("*No action items identified.*")
-
-# --- Deal Status ---
-st.markdown("### Deal Status Assessment")
-deal_status = summary.get("deal_status", {})
-if deal_status:
-    ds_cols = st.columns(2)
-    ds_cols[0].metric("Recommended Stage", deal_status.get("stage_recommendation", "N/A"))
-    ds_cols[1].metric("Confidence", deal_status.get("confidence_level", "N/A"))
-
-    value_change = deal_status.get("deal_value_change", "no change")
-    st.markdown(f"**Deal Value:** {value_change}")
-
-    risks = deal_status.get("risks", [])
-    if risks:
-        st.markdown("**Risks:**")
-        for risk in risks:
-            st.markdown(f"- {risk}")
-
-# --- Follow-up ---
-follow_up = summary.get("follow_up_date")
-if follow_up:
-    st.markdown(f"### Suggested Follow-up: {follow_up}")
-
-# --- Additional Notes ---
-additional = summary.get("additional_notes")
-if additional:
-    st.markdown("### Additional Notes")
-    st.markdown(additional)
+    st.markdown(st.session_state.summary_markdown)
 
 st.divider()
 
-# --- Mock Dynamics Sync ---
-st.markdown("### Sync to Microsoft Dynamics")
-if st.button("Sync Summary to Dynamics CRM", type="primary", use_container_width=True):
-    st.toast("Summary synced to Microsoft Dynamics CRM!", icon="✅")
-    st.balloons()
-if st.button("Sync Raw Transcript to Dynamics CRM", use_container_width=True):
-    st.toast("Raw transcript synced to Microsoft Dynamics CRM!", icon="✅")
+# --- Download buttons ---
+st.markdown("### Export")
+dl_cols = st.columns(2)
+
+with dl_cols[0]:
+    st.download_button(
+        "Download Summary (.md)",
+        data=st.session_state.summary_markdown,
+        file_name=f"{meeting['client_name'].replace(' ', '_')}_debrief_summary.md",
+        mime="text/markdown",
+        type="primary",
+        use_container_width=True,
+    )
+
+with dl_cols[1]:
+    transcript_text = format_transcript(transcript) if transcript else "No transcript available."
+    st.download_button(
+        "Download Transcript (.md)",
+        data=transcript_text,
+        file_name=f"{meeting['client_name'].replace(' ', '_')}_transcript.md",
+        mime="text/markdown",
+        use_container_width=True,
+    )
 
 # --- Raw Transcript ---
 st.divider()
