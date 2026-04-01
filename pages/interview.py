@@ -431,33 +431,19 @@ _voice_widget = st.components.v2.component(
                 ws.onmessage = async (event) => {
                     msgCount++;
 
-                    // Gemini sends both text (JSON) and binary (audio) frames
+                    // Gemini may send binary Blob frames — read as text for JSON parsing
+                    let rawText;
                     if (event.data instanceof Blob) {
-                        // Binary frame = raw audio PCM data
-                        const arrayBuf = await event.data.arrayBuffer();
-                        const bytes = new Uint8Array(arrayBuf);
-                        if (bytes.length > 0) {
-                            // Convert to base64 for playAudioChunk
-                            let binary = '';
-                            for (let i = 0; i < bytes.length; i++) {
-                                binary += String.fromCharCode(bytes[i]);
-                            }
-                            playAudioChunk(btoa(binary));
-                            indicator.style.width = '80%';
-                            setTimeout(() => { indicator.style.width = '0%'; }, 200);
-                            if (msgCount <= 3) {
-                                console.log('[Voice] Binary audio frame #' + msgCount + ': ' + bytes.length + ' bytes');
-                            }
-                        }
-                        return;
+                        rawText = await event.data.text();
+                    } else {
+                        rawText = event.data;
                     }
 
-                    // Text frame = JSON message
                     let msg;
                     try {
-                        msg = JSON.parse(event.data);
+                        msg = JSON.parse(rawText);
                     } catch (e) {
-                        console.warn('[Voice] Non-JSON message:', typeof event.data, event.data);
+                        console.warn('[Voice] Non-JSON message, length:', rawText.length);
                         return;
                     }
 
