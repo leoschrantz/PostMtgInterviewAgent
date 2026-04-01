@@ -376,15 +376,18 @@ _voice_widget = st.components.v2.component(
 
                 ws.onopen = () => {
                     clearTimeout(connectTimeout);
-                    // Send setup config as first message (format per Google docs)
+                    // Send setup as first message
+                    // The API reference uses "setup" key with generationConfig
                     const setupMsg = {
-                        config: {
+                        setup: {
                             model: 'models/' + model,
-                            responseModalities: ['AUDIO'],
-                            speechConfig: {
-                                voiceConfig: {
-                                    prebuiltVoiceConfig: {
-                                        voiceName: 'Kore'
+                            generationConfig: {
+                                responseModalities: ['AUDIO'],
+                                speechConfig: {
+                                    voiceConfig: {
+                                        prebuiltVoiceConfig: {
+                                            voiceName: 'Kore'
+                                        }
                                     }
                                 }
                             },
