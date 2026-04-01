@@ -267,6 +267,13 @@ _voice_widget = st.components.v2.component(
         const model = data.model;
         const systemInstruction = data.system_instruction;
 
+        // Clean up any previous connection (guards against double-init from Streamlit reruns)
+        if (window._geminiWs && window._geminiWs.readyState <= WebSocket.OPEN) {
+            console.log('[Voice] Closing stale WebSocket from previous render');
+            window._geminiWs.onclose = null;
+            window._geminiWs.close();
+        }
+
         // Gemini Live API WebSocket URL
         const wsUrl = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=' + apiKey;
 
@@ -389,6 +396,7 @@ _voice_widget = st.components.v2.component(
 
                 // Connect directly to Gemini Live API
                 ws = new WebSocket(wsUrl);
+                window._geminiWs = ws;  // Track globally for cleanup
 
                 let connectTimeout = setTimeout(() => {
                     if (isActive && !configSent) {
@@ -453,14 +461,11 @@ _voice_widget = st.components.v2.component(
                     // Setup complete acknowledgment
                     if (msg.setupComplete) {
                         setupComplete = true;
-                        console.log('[Voice] Setup complete — starting mic and prompting greeting');
+                        console.log('[Voice] Setup complete — prompting greeting, then starting mic');
                         setStatus('Interviewer is speaking...');
 
-                        // NOW start mic capture (only after setup is acknowledged)
-                        startMicCapture();
-
                         // Prompt Gemini to speak first with a greeting
-                        ws.send(JSON.stringify({
+                        const greetingMsg = {
                             clientContent: {
                                 turns: [{
                                     role: 'user',
@@ -468,7 +473,12 @@ _voice_widget = st.components.v2.component(
                                 }],
                                 turnComplete: true
                             }
-                        }));
+                        };
+                        console.log('[Voice] Sending greeting:', JSON.stringify(greetingMsg).substring(0, 200));
+                        ws.send(JSON.stringify(greetingMsg));
+
+                        // Start mic capture after a short delay to let the greeting process
+                        setTimeout(() => { startMicCapture(); }, 500);
                     }
 
                     const sc = msg.serverContent;
@@ -527,9 +537,9 @@ _voice_widget = st.components.v2.component(
 
                 ws.onclose = (event) => {
                     clearTimeout(connectTimeout);
+                    console.log('[Voice] WebSocket closed: code=' + event.code + ' reason=' + event.reason + ' setupComplete=' + setupComplete + ' msgCount=' + msgCount);
                     if (isActive) {
                         if (!setupComplete) {
-                            // Connection was rejected before setup completed
                             setStatus('Gemini rejected connection (code ' + event.code + '). Check API key in Streamlit secrets.');
                             cleanup();
                         } else {
@@ -593,10 +603,10 @@ _voice_widget = st.components.v2.component(
                     const b64 = btoa(binary);
                     ws.send(JSON.stringify({
                         realtimeInput: {
-                            audio: {
+                            mediaChunks: [{
                                 data: b64,
                                 mimeType: 'audio/pcm;rate=16000'
-                            }
+                            }]
                         }
                     }));
                     indicator.style.width = '40%';
