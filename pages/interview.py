@@ -316,8 +316,16 @@ _voice_widget = st.components.v2.component(
             }
         }
 
+        let audioChunkCount = 0;
         function playAudioChunk(b64Data) {
-            if (!playbackContext) return;
+            if (!playbackContext) { console.warn('[Voice] No playbackContext'); return; }
+            if (playbackContext.state === 'suspended') {
+                playbackContext.resume();
+            }
+            audioChunkCount++;
+            if (audioChunkCount <= 3) {
+                console.log('[Voice] Audio chunk #' + audioChunkCount + ': ' + b64Data.length + ' b64 chars, ctx state=' + playbackContext.state);
+            }
 
             // Decode base64 to bytes properly
             const binaryStr = atob(b64Data);
@@ -362,10 +370,15 @@ _voice_widget = st.components.v2.component(
                 configSent = false;
                 setupComplete = false;
 
-                // Create playback AudioContext during user gesture (required by mobile browsers)
+                // Create playback AudioContext during user gesture (required by browsers)
                 if (!playbackContext) {
                     playbackContext = new AudioContext({ sampleRate: 24000 });
                 }
+                // Chrome suspends AudioContext until resumed during user gesture
+                if (playbackContext.state === 'suspended') {
+                    await playbackContext.resume();
+                }
+                console.log('[Voice] playbackContext state:', playbackContext.state, 'sampleRate:', playbackContext.sampleRate);
 
                 // Get microphone
                 mediaStream = await navigator.mediaDevices.getUserMedia({
@@ -414,8 +427,13 @@ _voice_widget = st.components.v2.component(
                     startMicCapture();
                 };
 
+                let msgCount = 0;
                 ws.onmessage = (event) => {
                     const msg = JSON.parse(event.data);
+                    msgCount++;
+                    if (msgCount <= 5) {
+                        console.log('[Voice] msg #' + msgCount + ':', JSON.stringify(msg).substring(0, 300));
+                    }
 
                     // Setup complete acknowledgment
                     if (msg.setupComplete) {
