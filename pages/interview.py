@@ -307,19 +307,56 @@ _voice_widget = st.components.v2.component(
             transcriptEl.scrollTop = transcriptEl.scrollHeight;
         }
 
+        // Live streaming display elements (updated as text arrives)
+        let liveUserEl = null;
+        let liveAgentEl = null;
+
+        function updateLiveText(role, fullText) {
+            const isUser = role === 'user';
+            let el = isUser ? liveUserEl : liveAgentEl;
+            if (!el) {
+                el = document.createElement('div');
+                el.className = (isUser ? 'user-msg' : 'agent-msg') + ' live';
+                el.style.opacity = '0.7';
+                const label = isUser ? 'You' : 'Interviewer';
+                el.innerHTML = '<span class="label">' + label + ':</span> <span class="live-text"></span>';
+                transcriptEl.appendChild(el);
+                if (isUser) { liveUserEl = el; } else { liveAgentEl = el; }
+            }
+            el.querySelector('.live-text').textContent = fullText;
+            transcriptEl.scrollTop = transcriptEl.scrollHeight;
+        }
+
+        function finalizeLive(role) {
+            const isUser = role === 'user';
+            const el = isUser ? liveUserEl : liveAgentEl;
+            if (el) {
+                el.style.opacity = '1';
+                el.classList.remove('live');
+                if (isUser) { liveUserEl = null; } else { liveAgentEl = null; }
+            }
+        }
+
         function flushUserText() {
             if (currentUserText.trim()) {
                 transcript.push({ role: 'user', content: currentUserText.trim() });
-                addTranscriptDisplay('user', currentUserText.trim());
+                finalizeLive('user');
                 currentUserText = '';
+            } else if (liveUserEl) {
+                // No text accumulated but live el exists — remove it
+                liveUserEl.remove();
+                liveUserEl = null;
             }
         }
 
         function flushAgentText() {
             if (currentAgentText.trim()) {
                 transcript.push({ role: 'assistant', content: currentAgentText.trim() });
-                addTranscriptDisplay('assistant', currentAgentText.trim());
+                finalizeLive('assistant');
                 currentAgentText = '';
+            } else if (liveAgentEl) {
+                liveAgentEl.remove();
+                liveAgentEl = null;
             }
         }
 
@@ -491,17 +528,19 @@ _voice_widget = st.components.v2.component(
                         setStatus('Interviewer is speaking...');
                     }
 
-                    // Input transcription (user speech)
+                    // Input transcription (user speech) — show live as it streams
                     if (sc.inputTranscription && sc.inputTranscription.text) {
                         currentUserText += sc.inputTranscription.text;
+                        updateLiveText('user', currentUserText.trim());
                         if (sc.inputTranscription.finished) {
                             flushUserText();
                         }
                     }
 
-                    // Output transcription (agent speech)
+                    // Output transcription (agent speech) — show live as it streams
                     if (sc.outputTranscription && sc.outputTranscription.text) {
                         currentAgentText += sc.outputTranscription.text;
+                        updateLiveText('assistant', currentAgentText.trim());
                         if (sc.outputTranscription.finished) {
                             flushAgentText();
                         }
