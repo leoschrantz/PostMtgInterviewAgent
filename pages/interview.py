@@ -461,12 +461,19 @@ _voice_widget = st.components.v2.component(
                     // Setup complete acknowledgment
                     if (msg.setupComplete) {
                         setupComplete = true;
-                        console.log('[Voice] Setup complete — starting mic capture');
-                        setStatus('Connected! Speak to start your debrief...');
+                        console.log('[Voice] Setup complete — sending greeting prompt');
+                        setStatus('Interviewer is starting...');
 
-                        // Start mic capture — the system instruction tells Gemini
-                        // to greet first once it hears audio input
-                        startMicCapture();
+                        // Use realtimeInput.text to prompt the greeting
+                        // (clientContent caused "invalid argument" on v1beta)
+                        ws.send(JSON.stringify({
+                            realtimeInput: {
+                                text: 'The salesperson just joined the debrief. Greet them warmly and ask how the meeting went overall. Keep it brief — one or two sentences.'
+                            }
+                        }));
+
+                        // Start mic capture after a brief delay to let greeting process
+                        setTimeout(() => { startMicCapture(); }, 300);
                     }
 
                     const sc = msg.serverContent;
