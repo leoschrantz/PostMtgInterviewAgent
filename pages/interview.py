@@ -72,8 +72,8 @@ meeting_context = (
 system_instruction = f"{INTERVIEWER_SYSTEM_PROMPT}\n\nMeeting Context:\n{meeting_context}"
 
 # --- API key for browser-to-Gemini connection ---
-# For production, use ephemeral tokens instead. For this prototype,
-# the API key is passed to the browser for direct WebSocket connection.
+# API key is passed to the browser for direct WebSocket connection.
+# For production, consider using ephemeral tokens for enhanced security.
 GOOGLE_API_KEY = st.secrets.get("GOOGLE_API_KEY", "")
 
 # --- Summary complete ---
@@ -269,7 +269,7 @@ _voice_widget = st.components.v2.component(
 
         // Clean up any previous connection (guards against double-init from Streamlit reruns)
         if (window._geminiWs && window._geminiWs.readyState <= WebSocket.OPEN) {
-            console.log('[Voice] Closing stale WebSocket from previous render');
+
             window._geminiWs.onclose = null;
             window._geminiWs.close();
         }
@@ -377,9 +377,6 @@ _voice_widget = st.components.v2.component(
                 playbackContext.resume();
             }
             audioChunkCount++;
-            if (audioChunkCount <= 3) {
-                console.log('[Voice] Audio chunk #' + audioChunkCount + ': ' + b64Data.length + ' b64 chars, ctx state=' + playbackContext.state);
-            }
 
             // Decode base64 to bytes properly
             const binaryStr = atob(b64Data);
@@ -439,7 +436,7 @@ _voice_widget = st.components.v2.component(
                 if (playbackContext.state === 'suspended') {
                     await playbackContext.resume();
                 }
-                console.log('[Voice] playbackContext state:', playbackContext.state, 'sampleRate:', playbackContext.sampleRate);
+
 
                 // Get microphone
                 mediaStream = await navigator.mediaDevices.getUserMedia({
@@ -488,9 +485,7 @@ _voice_widget = st.components.v2.component(
                     // NOTE: Do NOT start mic capture here — wait for setupComplete
                 };
 
-                let msgCount = 0;
                 ws.onmessage = async (event) => {
-                    msgCount++;
 
                     // Gemini may send binary Blob frames — read as text for JSON parsing
                     let rawText;
@@ -508,14 +503,10 @@ _voice_widget = st.components.v2.component(
                         return;
                     }
 
-                    if (msgCount <= 5) {
-                        console.log('[Voice] JSON msg #' + msgCount + ':', JSON.stringify(msg).substring(0, 300));
-                    }
-
                     // Setup complete acknowledgment
                     if (msg.setupComplete) {
                         setupComplete = true;
-                        console.log('[Voice] Setup complete — sending greeting prompt');
+
                         setStatus('Interviewer is starting...');
 
                         // Use realtimeInput.text to prompt the greeting
@@ -593,7 +584,7 @@ _voice_widget = st.components.v2.component(
 
                 ws.onclose = (event) => {
                     clearTimeout(connectTimeout);
-                    console.log('[Voice] WebSocket closed: code=' + event.code + ' reason=' + event.reason + ' setupComplete=' + setupComplete + ' msgCount=' + msgCount);
+
                     if (isActive) {
                         if (!setupComplete) {
                             setStatus('Gemini rejected connection (code ' + event.code + '). Check API key in Streamlit secrets.');

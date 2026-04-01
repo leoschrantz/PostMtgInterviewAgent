@@ -25,11 +25,3 @@ def save_interview(meeting_id: str, transcript: list[dict], summary: dict):
         "summary": summary,
     }
     filepath.write_text(json.dumps(data, indent=2))
-
-
-def load_interview(meeting_id: str) -> dict | None:
-    """Load saved interview data, if it exists."""
-    filepath = DATA_DIR / f"{meeting_id}.json"
-    if filepath.exists():
-        return json.loads(filepath.read_text())
-    return None
