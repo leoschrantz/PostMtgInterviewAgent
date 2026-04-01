@@ -700,6 +700,9 @@ _voice_widget = st.components.v2.component(
         }
 
         function stopConversation() {
+            // Stop all audio playback immediately
+            stopAllPlayback();
+
             // Flush any remaining text
             flushUserText();
             flushAgentText();
