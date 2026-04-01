@@ -284,9 +284,8 @@ _voice_widget = st.components.v2.component(
         let currentUserText = '';
         let currentAgentText = '';
 
-        // Audio playback queue
-        let playbackQueue = [];
-        let isPlaying = false;
+        // Audio playback scheduling
+        let nextPlayTime = 0;
 
         function setStatus(text) {
             statusEl.textContent = text;
@@ -317,39 +316,44 @@ _voice_widget = st.components.v2.component(
             }
         }
 
-        async function playAudioChunk(b64Data) {
-            playbackQueue.push(b64Data);
-            if (!isPlaying) processPlaybackQueue();
-        }
+        function playAudioChunk(b64Data) {
+            if (!playbackContext) return;
 
-        async function processPlaybackQueue() {
-            if (playbackQueue.length === 0) {
-                isPlaying = false;
-                return;
-            }
-            isPlaying = true;
-            const b64 = playbackQueue.shift();
-            const raw = atob(b64);
-            const bytes = new Uint8Array(raw.length);
-            for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
-
-            // Convert 16-bit PCM 24kHz to Float32
-            const pcm16 = new Int16Array(bytes.buffer);
-            const float32 = new Float32Array(pcm16.length);
-            for (let i = 0; i < pcm16.length; i++) {
-                float32[i] = pcm16[i] / 32768.0;
+            // Decode base64 to bytes properly
+            const binaryStr = atob(b64Data);
+            const len = binaryStr.length;
+            const bytes = new Uint8Array(len);
+            for (let i = 0; i < len; i++) {
+                bytes[i] = binaryStr.charCodeAt(i);
             }
 
-            if (!playbackContext) {
-                playbackContext = new AudioContext({ sampleRate: 24000 });
+            // Convert bytes to Int16 samples (16-bit PCM, little-endian)
+            const sampleCount = Math.floor(bytes.length / 2);
+            if (sampleCount === 0) return;
+
+            const float32 = new Float32Array(sampleCount);
+            for (let i = 0; i < sampleCount; i++) {
+                // Read little-endian int16
+                let sample = bytes[i * 2] | (bytes[i * 2 + 1] << 8);
+                if (sample >= 0x8000) sample -= 0x10000;
+                float32[i] = sample / 32768.0;
             }
+
+            // Create audio buffer at 24kHz
             const buffer = playbackContext.createBuffer(1, float32.length, 24000);
             buffer.getChannelData(0).set(float32);
+
             const source = playbackContext.createBufferSource();
             source.buffer = buffer;
             source.connect(playbackContext.destination);
-            source.onended = () => processPlaybackQueue();
-            source.start();
+
+            // Schedule for gapless playback
+            const now = playbackContext.currentTime;
+            if (nextPlayTime < now) {
+                nextPlayTime = now;
+            }
+            source.start(nextPlayTime);
+            nextPlayTime += buffer.duration;
         }
 
         async function startConversation() {
@@ -471,8 +475,7 @@ _voice_widget = st.components.v2.component(
                     // Interrupted (barge-in)
                     if (sc.interrupted) {
                         flushAgentText();
-                        playbackQueue = [];
-                        isPlaying = false;
+                        nextPlayTime = 0;  // reset playback schedule
                         setStatus('Listening...');
                     }
                 };
@@ -590,8 +593,7 @@ _voice_widget = st.components.v2.component(
                 audioContext = null;
             }
 
-            playbackQueue = [];
-            isPlaying = false;
+            nextPlayTime = 0;
         }
 
         function stopConversation() {
