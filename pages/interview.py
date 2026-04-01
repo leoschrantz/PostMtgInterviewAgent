@@ -461,24 +461,12 @@ _voice_widget = st.components.v2.component(
                     // Setup complete acknowledgment
                     if (msg.setupComplete) {
                         setupComplete = true;
-                        console.log('[Voice] Setup complete — prompting greeting, then starting mic');
-                        setStatus('Interviewer is speaking...');
+                        console.log('[Voice] Setup complete — starting mic capture');
+                        setStatus('Connected! Speak to start your debrief...');
 
-                        // Prompt Gemini to speak first with a greeting
-                        const greetingMsg = {
-                            clientContent: {
-                                turns: [{
-                                    role: 'user',
-                                    parts: [{ text: 'The salesperson just joined. Greet them warmly and ask how the meeting went. Keep it brief — one or two sentences.' }]
-                                }],
-                                turnComplete: true
-                            }
-                        };
-                        console.log('[Voice] Sending greeting:', JSON.stringify(greetingMsg).substring(0, 200));
-                        ws.send(JSON.stringify(greetingMsg));
-
-                        // Start mic capture after a short delay to let the greeting process
-                        setTimeout(() => { startMicCapture(); }, 500);
+                        // Start mic capture — the system instruction tells Gemini
+                        // to greet first once it hears audio input
+                        startMicCapture();
                     }
 
                     const sc = msg.serverContent;
@@ -603,10 +591,10 @@ _voice_widget = st.components.v2.component(
                     const b64 = btoa(binary);
                     ws.send(JSON.stringify({
                         realtimeInput: {
-                            mediaChunks: [{
+                            audio: {
                                 data: b64,
                                 mimeType: 'audio/pcm;rate=16000'
-                            }]
+                            }
                         }
                     }));
                     indicator.style.width = '40%';
