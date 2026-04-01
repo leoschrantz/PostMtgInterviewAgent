@@ -428,11 +428,41 @@ _voice_widget = st.components.v2.component(
                 };
 
                 let msgCount = 0;
-                ws.onmessage = (event) => {
-                    const msg = JSON.parse(event.data);
+                ws.onmessage = async (event) => {
                     msgCount++;
+
+                    // Gemini sends both text (JSON) and binary (audio) frames
+                    if (event.data instanceof Blob) {
+                        // Binary frame = raw audio PCM data
+                        const arrayBuf = await event.data.arrayBuffer();
+                        const bytes = new Uint8Array(arrayBuf);
+                        if (bytes.length > 0) {
+                            // Convert to base64 for playAudioChunk
+                            let binary = '';
+                            for (let i = 0; i < bytes.length; i++) {
+                                binary += String.fromCharCode(bytes[i]);
+                            }
+                            playAudioChunk(btoa(binary));
+                            indicator.style.width = '80%';
+                            setTimeout(() => { indicator.style.width = '0%'; }, 200);
+                            if (msgCount <= 3) {
+                                console.log('[Voice] Binary audio frame #' + msgCount + ': ' + bytes.length + ' bytes');
+                            }
+                        }
+                        return;
+                    }
+
+                    // Text frame = JSON message
+                    let msg;
+                    try {
+                        msg = JSON.parse(event.data);
+                    } catch (e) {
+                        console.warn('[Voice] Non-JSON message:', typeof event.data, event.data);
+                        return;
+                    }
+
                     if (msgCount <= 5) {
-                        console.log('[Voice] msg #' + msgCount + ':', JSON.stringify(msg).substring(0, 300));
+                        console.log('[Voice] JSON msg #' + msgCount + ':', JSON.stringify(msg).substring(0, 300));
                     }
 
                     // Setup complete acknowledgment
@@ -455,7 +485,7 @@ _voice_widget = st.components.v2.component(
                     const sc = msg.serverContent;
                     if (!sc) return;
 
-                    // Audio from model
+                    // Audio from model (inline base64 in JSON)
                     if (sc.modelTurn && sc.modelTurn.parts) {
                         for (const part of sc.modelTurn.parts) {
                             if (part.inlineData && part.inlineData.data) {
