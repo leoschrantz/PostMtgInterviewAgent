@@ -6,9 +6,6 @@ No intermediary server needed — works on Streamlit Cloud.
 
 import json
 import streamlit as st
-from google import genai
-from google.genai import types
-import datetime
 from mock_data import get_meeting, update_meeting_status
 from agent import generate_summary
 from utils import save_interview
@@ -74,24 +71,10 @@ meeting_context = (
 
 system_instruction = f"{INTERVIEWER_SYSTEM_PROMPT}\n\nMeeting Context:\n{meeting_context}"
 
-# --- Generate ephemeral token for browser-to-Gemini connection ---
-@st.cache_data(ttl=50)  # Cache for 50 seconds (token valid for 60s new sessions)
-def _get_ephemeral_token():
-    """Generate a short-lived token so the API key stays server-side."""
-    client = genai.Client(
-        api_key=st.secrets["GOOGLE_API_KEY"],
-        http_options={"api_version": "v1alpha"},
-    )
-    now = datetime.datetime.now(tz=datetime.timezone.utc)
-    token = client.auth_tokens.create(
-        config={
-            "uses": 1,
-            "expire_time": now + datetime.timedelta(minutes=30),
-            "new_session_expire_time": now + datetime.timedelta(minutes=2),
-            "http_options": {"api_version": "v1alpha"},
-        }
-    )
-    return token.name
+# --- API key for browser-to-Gemini connection ---
+# For production, use ephemeral tokens instead. For this prototype,
+# the API key is passed to the browser for direct WebSocket connection.
+GOOGLE_API_KEY = st.secrets.get("GOOGLE_API_KEY", "")
 
 # --- Summary complete ---
 if st.session_state.interview_complete and st.session_state.current_summary:
@@ -161,12 +144,8 @@ if st.session_state.show_recap_form:
             st.warning("Please enter some notes first.")
     st.stop()
 
-# --- Get ephemeral token ---
-try:
-    ephemeral_token = _get_ephemeral_token()
-except Exception as e:
-    st.error(f"Failed to connect to Google AI: {e}")
-    st.caption("Check that GOOGLE_API_KEY is set correctly in Streamlit secrets.")
+if not GOOGLE_API_KEY:
+    st.error("GOOGLE_API_KEY not found in Streamlit secrets.")
     st.session_state.show_recap_form = True
     st.stop()
 
@@ -284,12 +263,12 @@ _voice_widget = st.components.v2.component(
         const indicator = container.querySelector('#audio-indicator');
         const transcriptEl = container.querySelector('#transcript-display');
 
-        const token = data.token;
+        const apiKey = data.api_key;
         const model = data.model;
         const systemInstruction = data.system_instruction;
 
-        // Gemini Live API WebSocket URL (using ephemeral token)
-        const wsUrl = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?access_token=' + token;
+        // Gemini Live API WebSocket URL
+        const wsUrl = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=' + apiKey;
 
         let ws = null;
         let audioContext = null;
@@ -298,6 +277,7 @@ _voice_widget = st.components.v2.component(
         let workletNode = null;
         let isActive = false;
         let configSent = false;
+        let setupComplete = false;  // true once Gemini acknowledges config
 
         // Transcript accumulation
         let transcript = [];
@@ -428,6 +408,7 @@ _voice_widget = st.components.v2.component(
 
                     // Setup complete acknowledgment
                     if (msg.setupComplete) {
+                        setupComplete = true;
                         setStatus('Interviewer is speaking...');
                     }
 
@@ -481,15 +462,23 @@ _voice_widget = st.components.v2.component(
                 ws.onerror = (err) => {
                     clearTimeout(connectTimeout);
                     console.error('WebSocket error:', err);
-                    setStatus('Connection error. Check console for details.');
+                    if (!setupComplete) {
+                        setStatus('Failed to connect to Gemini. Check API key and try again.');
+                    }
                 };
 
                 ws.onclose = (event) => {
                     clearTimeout(connectTimeout);
                     if (isActive) {
-                        const reason = event.reason || (event.code === 1000 ? '' : 'code ' + event.code);
-                        setStatus('Connection closed' + (reason ? ': ' + reason : '') + '. Tap mic to reconnect.');
-                        stopConversation();
+                        if (!setupComplete) {
+                            // Connection was rejected before setup completed
+                            setStatus('Gemini rejected connection (code ' + event.code + '). Check API key in Streamlit secrets.');
+                            cleanup();
+                        } else {
+                            const reason = event.reason || '';
+                            setStatus('Connection closed' + (reason ? ': ' + reason : '') + '. Tap mic to reconnect.');
+                            cleanup();
+                        }
                     }
                 };
 
@@ -562,21 +551,13 @@ _voice_widget = st.components.v2.component(
             workletNode.connect(audioContext.createMediaStreamDestination());
         }
 
-        function stopConversation() {
+        function cleanup() {
+            // Release resources without setting status
             isActive = false;
             micBtn.classList.remove('active');
             micIcon.style.display = 'block';
             stopIcon.style.display = 'none';
             indicator.style.width = '0%';
-
-            // Flush any remaining text
-            flushUserText();
-            flushAgentText();
-
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.close();
-            }
-            ws = null;
 
             if (workletNode) {
                 workletNode.disconnect();
@@ -593,6 +574,19 @@ _voice_widget = st.components.v2.component(
 
             playbackQueue = [];
             isPlaying = false;
+        }
+
+        function stopConversation() {
+            // Flush any remaining text
+            flushUserText();
+            flushAgentText();
+
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.close();
+            }
+            ws = null;
+
+            cleanup();
 
             // Send transcript back to Streamlit via setStateValue
             if (transcript.length > 0) {
@@ -621,7 +615,7 @@ def _on_transcript_change():
 
 widget_result = _voice_widget(
     data={
-        "token": ephemeral_token,
+        "api_key": GOOGLE_API_KEY,
         "model": GEMINI_LIVE_MODEL,
         "system_instruction": system_instruction,
     },
