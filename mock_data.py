@@ -1,6 +1,8 @@
-"""Mock Microsoft Dynamics CRM data for the Post-Meeting Interview Agent."""
+"""Mock Microsoft Dynamics CRM seed data for the Post-Meeting Interview Agent.
 
-import streamlit as st
+This file is data-only. The CRM access layer (reads, writes, backend
+selection) lives in crm_client.py.
+"""
 
 MOCK_MEETINGS = [
     {
@@ -84,40 +86,3 @@ MOCK_MEETINGS = [
         "summary": None,
     },
 ]
-
-
-def init_meetings():
-    """Initialize meetings in session state if not already present."""
-    if "meetings" not in st.session_state:
-        import copy
-        st.session_state.meetings = copy.deepcopy(MOCK_MEETINGS)
-
-
-def get_all_meetings() -> list[dict]:
-    """Return all meetings from session state."""
-    init_meetings()
-    return st.session_state.meetings
-
-
-def get_meeting(meeting_id: str) -> dict | None:
-    """Return a single meeting by ID."""
-    init_meetings()
-    for meeting in st.session_state.meetings:
-        if meeting["id"] == meeting_id:
-            return meeting
-    return None
-
-
-def update_meeting_status(
-    meeting_id: str, status: str, transcript: list | None = None, summary: dict | None = None
-):
-    """Update a meeting's status and optionally store transcript/summary."""
-    init_meetings()
-    for meeting in st.session_state.meetings:
-        if meeting["id"] == meeting_id:
-            meeting["status"] = status
-            if transcript is not None:
-                meeting["transcript"] = transcript
-            if summary is not None:
-                meeting["summary"] = summary
-            break

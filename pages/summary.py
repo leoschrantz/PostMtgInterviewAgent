@@ -1,8 +1,7 @@
 """Summary page - displays structured interview summary and raw transcript."""
 
-import json
 import streamlit as st
-from mock_data import get_meeting
+from crm_client import get_crm_client
 from utils import format_transcript
 
 # --- Guard: must have an active meeting ---
@@ -12,7 +11,7 @@ if "active_meeting_id" not in st.session_state or not st.session_state.active_me
         st.switch_page("pages/dashboard.py")
     st.stop()
 
-meeting = get_meeting(st.session_state.active_meeting_id)
+meeting = get_crm_client().get_meeting(st.session_state.active_meeting_id)
 if not meeting:
     st.error("Meeting not found.")
     st.stop()

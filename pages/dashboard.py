@@ -1,14 +1,14 @@
-"""Meetings Dashboard - displays mock Dynamics CRM meetings with interview status."""
+"""Meetings Dashboard - displays CRM meetings with interview status."""
 
 import streamlit as st
-from mock_data import get_all_meetings
+from crm_client import get_crm_client
 
 st.title("Meetings Dashboard")
 st.caption("Microsoft Dynamics CRM  |  Post-Meeting Interview Tracker")
 
 st.divider()
 
-meetings = get_all_meetings()
+meetings = get_crm_client().get_meetings()
 
 # Summary metrics
 col1, col2, col3 = st.columns(3)
