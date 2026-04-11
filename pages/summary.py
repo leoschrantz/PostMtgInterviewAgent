@@ -2,6 +2,7 @@
 
 import streamlit as st
 from crm_client import get_crm_client
+from transcript_store import get_transcript_store
 from utils import format_transcript
 
 # --- Guard: must have an active meeting ---
@@ -31,6 +32,10 @@ if st.button("< Dashboard"):
     st.switch_page("pages/dashboard.py")
 st.subheader(f"{meeting['client_name']} - Debrief Summary")
 st.caption(f"{meeting['date']}  |  {meeting['type']}  |  {meeting['deal_name']}")
+
+# Warehouse save confirmation
+if st.session_state.get("warehouse_pushed"):
+    st.caption("✓ Raw transcript saved to warehouse")
 
 st.divider()
 
@@ -152,3 +157,15 @@ with st.expander("View Raw Interview Transcript"):
         st.markdown(format_transcript(transcript))
     else:
         st.markdown("*No transcript available.*")
+
+# --- Warehouse rows (mock Snowflake view) ---
+with st.expander("View Warehouse Rows (transcripts saved)"):
+    try:
+        rows = get_transcript_store().get_all_transcripts()
+        if rows:
+            st.caption(f"{len(rows)} transcript(s) in warehouse")
+            st.dataframe(rows, use_container_width=True, hide_index=True)
+        else:
+            st.markdown("*No transcripts saved yet.*")
+    except Exception as e:
+        st.markdown(f"*Warehouse unavailable: {e}*")

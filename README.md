@@ -18,7 +18,8 @@ A voice-powered AI debrief tool for sales teams. After completing a client meeti
 | Voice Conversation | Google Gemini Live API (direct browser-to-Gemini WebSocket) |
 | LLM (voice agent) | Gemini 3.1 Flash Live Preview (native audio, via Live API) |
 | LLM (summarization) | Claude Sonnet (via Anthropic API) |
-| CRM | Microsoft Dynamics (mocked) |
+| CRM | Microsoft Dynamics (pluggable — mock by default, stub for real Dataverse) |
+| Warehouse | DuckDB local file (pluggable — stub for real Snowflake) |
 | Hosting | Streamlit Community Cloud |
 
 ## Project Structure
@@ -26,16 +27,40 @@ A voice-powered AI debrief tool for sales teams. After completing a client meeti
 ```
 app.py                  # Entry point, page routing, global styling
 agent.py                # Claude API summarization
-mock_data.py            # Mock Dynamics CRM meetings data
+crm_client.py           # Pluggable CRM interface (Mock / Dynamics)
+transcript_store.py     # Pluggable warehouse interface (DuckDB / Snowflake)
+mock_data.py            # Mock Dynamics CRM seed data
 utils.py                # Transcript formatting, data persistence
 pages/
     dashboard.py        # Meeting list with status tracking
     interview.py        # Gemini Live API voice widget + summary generation
-    summary.py          # Structured summary display + mock CRM sync
+    summary.py          # Structured summary display, downloads, warehouse view
 .streamlit/
     config.toml         # Streamlit theme configuration
     secrets.toml        # API keys (local only, not committed)
+data/
+    transcripts.duckdb  # Local DuckDB warehouse file (gitignored)
 ```
+
+## Pluggable Backends
+
+Both the CRM and warehouse layers use abstract interfaces so you can swap the
+mock for a real backend with a single secrets change:
+
+```toml
+# .streamlit/secrets.toml
+CRM_BACKEND = "mock"        # or "dynamics"
+WAREHOUSE_BACKEND = "duckdb" # or "snowflake"
+```
+
+- **CRM**: `MockCRMClient` (default) stores meetings in session state.
+  `DynamicsCRMClient` is stubbed with implementation notes for the Dataverse Web API.
+- **Warehouse**: `DuckDBTranscriptStore` (default) writes to a local `.duckdb`
+  file using Snowflake-compatible SQL. `SnowflakeTranscriptStore` is stubbed
+  with implementation notes for the real `snowflake-connector-python` client.
+
+Both backends implement the same abstract method signatures, so switching
+backends requires zero changes to page code.
 
 ## Setup
 

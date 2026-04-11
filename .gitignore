@@ -8,6 +8,8 @@ __pycache__/
 
 # Data
 data/interviews/*.json
+data/*.duckdb
+data/*.duckdb.wal
 
 # IDE
 .vscode/

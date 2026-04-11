@@ -7,10 +7,31 @@ No intermediary server needed — works on Streamlit Cloud.
 import json
 import streamlit as st
 from crm_client import get_crm_client
+from transcript_store import get_transcript_store
 from agent import generate_summary
 from utils import save_interview
 
 crm = get_crm_client()
+
+
+def _push_to_warehouse(meeting_id: str, client_name: str, transcript: list, summary: dict, meeting: dict) -> None:
+    """Push transcript + summary to the configured warehouse backend.
+
+    Failures are caught and surfaced as a warning so they never block
+    the user from seeing their summary.
+    """
+    try:
+        get_transcript_store().push_transcript(
+            meeting_id=meeting_id,
+            client_name=client_name,
+            transcript=transcript,
+            summary=summary,
+            meeting=meeting,
+        )
+        st.session_state.warehouse_pushed = True
+    except Exception as e:
+        st.session_state.warehouse_pushed = False
+        st.warning(f"Could not push transcript to warehouse: {e}")
 
 
 GEMINI_LIVE_MODEL = "gemini-3.1-flash-live-preview"
@@ -101,6 +122,7 @@ if "pending_transcript" in st.session_state and st.session_state.pending_transcr
                 summary=summary,
             )
             save_interview(meeting["id"], transcript, summary)
+            _push_to_warehouse(meeting["id"], meeting["client_name"], transcript, summary, meeting)
             st.rerun()
         except Exception as e:
             st.error(f"Error generating summary: {e}")
@@ -141,6 +163,7 @@ if st.session_state.show_recap_form:
                         summary=summary,
                     )
                     save_interview(meeting["id"], transcript, summary)
+                    _push_to_warehouse(meeting["id"], meeting["client_name"], transcript, summary, meeting)
                     st.rerun()
                 except Exception as e:
                     st.error(f"Error generating summary: {e}")
