@@ -4,11 +4,11 @@ A voice-powered AI debrief tool for sales teams. After completing a client meeti
 
 ## What It Does
 
-1. **Meetings Dashboard** - Displays upcoming/recent meetings pulled from Microsoft Dynamics CRM (mocked for this prototype) with interview completion status
+1. **Meetings Dashboard** - Displays upcoming/recent meetings pulled from Microsoft Dynamics CRM (pluggable backend — mock by default, Dataverse stub available) with interview completion status
 2. **Voice Interview** - A Gemini Live API voice agent interviews the salesperson about their meeting using natural bidirectional voice conversation with automatic turn-taking
 3. **Smart Follow-ups** - The agent cross-references the salesperson's answers against pre-meeting objectives and asks about anything they missed (specific products, features, or action items)
-4. **Structured Summary** - Claude generates a structured summary including: meeting outcome, key takeaways, client sentiment, action items, deal status assessment, and recommended next steps
-5. **CRM Sync** - Summary and raw transcript are synced back to Dynamics (mocked via session state for this prototype)
+4. **Structured Summary** - Claude generates a structured summary including: meeting outcome, key takeaways, client sentiment, action items, deal status assessment, and recommended next steps. The summary is editable in-app and downloadable as Markdown.
+5. **Warehouse Push** - Raw transcripts and structured summaries are automatically pushed to a pluggable warehouse (local DuckDB by default, Snowflake stub available) for downstream analytics
 
 ## Tech Stack
 
@@ -102,7 +102,7 @@ streamlit run app.py
 3. Tap the **microphone button** to begin the voice conversation
 4. Talk naturally with the AI interviewer about your meeting
 5. When done, tap the stop button and click **End Interview & Generate Summary**
-6. Review the structured summary and optionally sync to Dynamics CRM
+6. Review the structured summary — tap **Edit Summary** to tweak it, then **Download Summary (.md)** or **Download Transcript (.md)** to export. The raw transcript is auto-saved to the warehouse and visible in the "View Warehouse Rows" expander.
 
 ## Architecture
 
@@ -135,14 +135,15 @@ and output transcriptions stream in real-time.
 - **Barge-in**: Users can interrupt the AI interviewer mid-sentence; audio stops immediately
 - **Fallback**: If voice/transcript retrieval fails, a manual text recap option is available
 - **Security**: API key is passed to the browser for direct WebSocket connection. For production, consider using ephemeral tokens
-- **Prototype scope**: Dynamics CRM integration is mocked. In production, this would connect via the Dynamics 365 Web API
+- **Pluggable backends**: CRM and warehouse layers are abstracted. The default stack (Mock CRM + DuckDB) runs with zero external dependencies. Swap to Dynamics / Snowflake via `secrets.toml` — the stubs document exactly what to implement.
 
 ## Future Enhancements
 
 - Ephemeral tokens for secure browser-to-Gemini authentication
-- Real Microsoft Dynamics 365 API integration
+- Wire up the `DynamicsCRMClient` stub against a real Dataverse instance (free Power Platform Developer Plan works)
+- Wire up the `SnowflakeTranscriptStore` stub against a real Snowflake account ($400 trial credits)
 - Automatic meeting detection (no manual selection needed)
 - Multi-language support
-- Team-level analytics dashboard
+- Team-level analytics dashboard (on top of the warehouse)
 - Calendar integration for scheduling follow-ups
 - CRM field auto-population from summaries
